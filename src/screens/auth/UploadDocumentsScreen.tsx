@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Image,
@@ -16,6 +17,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DocumentUploadOptionsSheet from "@/components/DocumentUploadOptionsSheet";
 import PhotoPreviewModal from "@/components/PhotoPreviewModal";
+import { registerDriver } from "@/api/backendClient";
+import { registrationStore } from "@/store/registrationStore";
 
 const BG = "#080D1A";
 const ORANGE = "#FF6500";
@@ -813,6 +816,8 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
     source: "camera" | "gallery";
     fileSize?: number;
   } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
 
@@ -1008,13 +1013,48 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
             />
           </View>
 
+          {/* ── Submit error ─────────────────────────────────────── */}
+          {submitError ? (
+            <View style={s.errorBox}>
+              <Text style={s.errorText}>{submitError}</Text>
+            </View>
+          ) : null}
+
           {/* ── Submit ───────────────────────────────────────────── */}
           <Pressable
-            style={s.submitBtn}
-            onPress={() => router.push("/register/submitted")}
+            style={[s.submitBtn, submitting && { opacity: 0.7 }]}
+            disabled={submitting}
+            onPress={async () => {
+              setSubmitError(null);
+              const data = registrationStore.get();
+              if (!data) {
+                setSubmitError("Registration data missing. Please go back to step 1.");
+                return;
+              }
+              setSubmitting(true);
+              try {
+                await registerDriver(data);
+                registrationStore.clear();
+                router.push("/register/submitted");
+              } catch (err: unknown) {
+                setSubmitError(
+                  err instanceof Error
+                    ? err.message
+                    : "Registration failed. Please try again."
+                );
+              } finally {
+                setSubmitting(false);
+              }
+            }}
           >
-            <SendIcon />
-            <Text style={s.submitBtnText}>Submit registration</Text>
+            {submitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <SendIcon />
+                <Text style={s.submitBtnText}>Submit registration</Text>
+              </>
+            )}
           </Pressable>
         </ScrollView>
 
@@ -1105,6 +1145,22 @@ const s = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     marginBottom: 28,
+  },
+
+  errorBox: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.40)",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  errorText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 13,
+    color: "#FCA5A5",
+    lineHeight: 18,
   },
 
   submitBtn: {

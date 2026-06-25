@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { registrationStore } from "@/store/registrationStore";
 
 type DriverType = "own_car" | "company_car";
 
@@ -750,6 +751,40 @@ export default function RegisterDriverStep1Screen() {
   const [driverType, setDriverType] = useState<DriverType>("company_car");
   const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
   const [showPicker, setShowPicker] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  function handleContinue() {
+    setErrorMsg(null);
+
+    if (!firstName.trim() || !lastName.trim()) {
+      setErrorMsg("Please enter your first and last name.");
+      return;
+    }
+    if (!email.trim()) {
+      setErrorMsg("Please enter your email address.");
+      return;
+    }
+    if (password.length < 8) {
+      setErrorMsg("Password must be at least 8 characters.");
+      return;
+    }
+
+    const fullPhone = phone.trim() ? `${country.dial}${phone.trim()}` : "";
+
+    registrationStore.set({
+      email: email.trim(),
+      password,
+      full_name: `${firstName.trim()} ${lastName.trim()}`,
+      phone: fullPhone,
+      car_type: driverType,
+    });
+
+    if (driverType === "own_car") {
+      router.push("/register/own-car-details" as any);
+    } else {
+      router.push("/register/upload-documents" as any);
+    }
+  }
 
   return (
     <>
@@ -896,16 +931,17 @@ export default function RegisterDriverStep1Screen() {
               onPress={() => setDriverType("company_car")}
             />
 
+            {/* ── Error message ───────────────────────────────────────── */}
+            {errorMsg ? (
+              <View style={s.errorBox}>
+                <Text style={s.errorText}>{errorMsg}</Text>
+              </View>
+            ) : null}
+
             {/* ── Continue ───────────────────────────────────────────── */}
             <Pressable
               style={s.continueBtn}
-              onPress={() => {
-                if (driverType === "own_car") {
-                  router.push("/register/own-car-details" as any);
-                } else {
-                  router.push("/register/upload-documents" as any);
-                }
-              }}
+              onPress={handleContinue}
             >
               <Text style={s.continueBtnText}>Continue →</Text>
             </Pressable>
@@ -1020,13 +1056,29 @@ const s = StyleSheet.create({
     marginBottom: 14,
   },
 
+  errorBox: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.40)",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 20,
+  },
+  errorText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 13,
+    color: "#FCA5A5",
+    lineHeight: 18,
+  },
+
   continueBtn: {
     backgroundColor: ORANGE,
     borderRadius: 999,
     height: 54,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 24,
+    marginTop: 16,
   },
   continueBtnText: {
     fontFamily: "Poppins_600SemiBold",
