@@ -271,7 +271,7 @@ export default function LoginScreen() {
                   <Text style={styles.registerText}>
                     {"Don't have an account? "}
                   </Text>
-                  <Pressable>
+                  <Pressable onPress={() => router.push("/register" as any)}>
                     <Text style={styles.registerLink}>Register as Driver</Text>
                   </Pressable>
                 </View>
