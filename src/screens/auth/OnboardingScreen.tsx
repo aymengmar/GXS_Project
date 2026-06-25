@@ -1,4 +1,5 @@
 import { images } from "@/constants/images";
+import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -13,6 +14,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
   Easing,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -29,7 +31,13 @@ const NAVY = "#001232";
 const ORANGE = "#FF6500";
 
 // ── Isometric 3-face cube icon ─────────────────────────────────────
-function CubeIcon({ size = 18, color = "#FFFFFF" }: { size?: number; color?: string }) {
+function CubeIcon({
+  size = 18,
+  color = "#FFFFFF",
+}: {
+  size?: number;
+  color?: string;
+}) {
   const half = size / 2;
   return (
     <View style={{ width: Math.round(size * 1.25), height: size }}>
@@ -74,6 +82,7 @@ function CubeIcon({ size = 18, color = "#FFFFFF" }: { size?: number; color?: str
 }
 
 export default function OnboardingScreen() {
+  const router = useRouter();
   const [pressed, setPressed] = useState(false);
   const insets = useSafeAreaInsets();
 
@@ -86,8 +95,9 @@ export default function OnboardingScreen() {
 
   // ── Navigate to the next screen ──────────────────────────────────
   const handleGetStarted = useCallback(() => {
-    // TODO: router.replace('/login') once auth screens are built
-  }, []);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    router.push("/login" as any);
+  }, [router]);
 
   // ── Looping hint animation (plays when idle) ──────────────────────
   const startAutoAnim = useCallback(() => {
@@ -97,9 +107,12 @@ export default function OnboardingScreen() {
     circleX.value = withRepeat(
       withSequence(
         // slide to 180dp — fades out well before reaching >>
-        withTiming(180, { duration: SLIDE_MS, easing: Easing.out(Easing.ease) }),
-        withTiming(0, { duration: 0 }),         // invisible snap back
-        withTiming(0, { duration: PAUSE_MS }),  // hold at start
+        withTiming(180, {
+          duration: SLIDE_MS,
+          easing: Easing.out(Easing.ease),
+        }),
+        withTiming(0, { duration: 0 }), // invisible snap back
+        withTiming(0, { duration: PAUSE_MS }), // hold at start
       ),
       -1,
       false,
@@ -107,7 +120,10 @@ export default function OnboardingScreen() {
 
     circleOpacity.value = withRepeat(
       withSequence(
-        withTiming(0, { duration: Math.round(SLIDE_MS * 0.55), easing: Easing.in(Easing.ease) }),
+        withTiming(0, {
+          duration: Math.round(SLIDE_MS * 0.55),
+          easing: Easing.in(Easing.ease),
+        }),
         withTiming(0, { duration: Math.round(SLIDE_MS * 0.45) }),
         withTiming(1, { duration: 0 }),
         withTiming(1, { duration: PAUSE_MS }),
@@ -158,18 +174,22 @@ export default function OnboardingScreen() {
       if (circleX.value >= maxSlide.value * 0.75) {
         // Crossed 75% → complete the slide and navigate
         circleX.value = withTiming(maxSlide.value, { duration: 150 }, () => {
-          handleGetStarted();
+          runOnJS(handleGetStarted)();
           // Reset circle and restart idle animation
           circleX.value = withTiming(0, { duration: 400 }, () => {
-            startAutoAnim();
+            runOnJS(startAutoAnim)();
           });
           circleOpacity.value = withTiming(1, { duration: 400 });
         });
       } else {
         // Released early → spring back to start, then resume idle animation
-        circleX.value = withSpring(0, { damping: 18, stiffness: 250 }, (finished) => {
-          if (finished) startAutoAnim();
-        });
+        circleX.value = withSpring(
+          0,
+          { damping: 18, stiffness: 250 },
+          (finished) => {
+            if (finished) runOnJS(startAutoAnim)();
+          },
+        );
         circleOpacity.value = withTiming(1, { duration: 200 });
       }
     });
@@ -276,7 +296,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: "40%",
-    backgroundColor: "rgba(0,10,35,0.92)",
   },
   safeArea: { flex: 1 },
 
