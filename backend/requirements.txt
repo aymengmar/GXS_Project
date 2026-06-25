@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
 supabase
+pydantic[email]
 pydantic-settings
 python-dotenv
