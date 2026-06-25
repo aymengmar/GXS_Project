@@ -156,6 +156,11 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loginPressed, setLoginPressed] = useState(false);
 
+  const handleLogin = async () => {
+    // TODO: Implement Supabase Auth sign-in logic
+    console.log("Login attempt:", { email });
+  };
+
   return (
     <>
       <StatusBar style="light" />
@@ -256,7 +261,7 @@ export default function LoginScreen() {
                   ]}
                   onPressIn={() => setLoginPressed(true)}
                   onPressOut={() => setLoginPressed(false)}
-                  onPress={() => {}}
+                  onPress={handleLogin}
                 >
                   <Text style={styles.loginBtnText}>Login</Text>
                 </Pressable>
@@ -266,7 +271,7 @@ export default function LoginScreen() {
                   <Text style={styles.registerText}>
                     {"Don't have an account? "}
                   </Text>
-                  <Pressable>
+                  <Pressable onPress={() => router.push("/register" as any)}>
                     <Text style={styles.registerLink}>Register as Driver</Text>
                   </Pressable>
                 </View>
