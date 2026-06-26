@@ -1,7 +1,8 @@
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -14,6 +15,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { sendEmailVerificationCode, verifyEmailCode } from "@/api/backendClient";
 import { registrationStore } from "@/store/registrationStore";
 
 type DriverType = "own_car" | "company_car";
@@ -706,7 +708,379 @@ const dt = StyleSheet.create({
   },
 });
 
+// ─── Email Verify Modal ───────────────────────────────────────────────────────
+
+function ModalLockIcon() {
+  return (
+    <View style={{ width: 36, height: 38, alignItems: "center" }}>
+      <View style={{
+        width: 22, height: 16, borderRadius: 4,
+        borderWidth: 2.5, borderColor: ORANGE,
+        position: "absolute", bottom: 0,
+        alignItems: "center", justifyContent: "center",
+      }}>
+        <View style={{ width: 3, height: 7, backgroundColor: ORANGE, borderRadius: 2 }} />
+      </View>
+      <View style={{
+        width: 14, height: 13,
+        borderTopLeftRadius: 7, borderTopRightRadius: 7,
+        borderTopWidth: 2.5, borderLeftWidth: 2.5, borderRightWidth: 2.5,
+        borderColor: ORANGE,
+        position: "absolute", top: 0,
+      }} />
+    </View>
+  );
+}
+
+function EmailVerifyModal({
+  visible,
+  email,
+  code,
+  onCodeChange,
+  error,
+  verifyLoading,
+  sendLoading,
+  cooldown,
+  onVerify,
+  onResend,
+  onClose,
+}: {
+  visible: boolean;
+  email: string;
+  code: string;
+  onCodeChange: (v: string) => void;
+  error?: string;
+  verifyLoading: boolean;
+  sendLoading: boolean;
+  cooldown: number;
+  onVerify: () => void;
+  onResend: () => void;
+  onClose: () => void;
+}) {
+  const hiddenInputRef = useRef<TextInput>(null);
+  const canVerify = code.length === 6 && !verifyLoading;
+  const digits = (code.split("").concat(Array(6 - code.length).fill(""))) as string[];
+  const activeIdx = Math.min(code.length, 5);
+
+  const timerLabel =
+    cooldown >= 60
+      ? `${Math.ceil(cooldown / 60)} minutes`
+      : cooldown > 0
+        ? `${cooldown} seconds`
+        : null;
+
+  useEffect(() => {
+    if (visible) {
+      const t = setTimeout(() => hiddenInputRef.current?.focus(), 150);
+      return () => clearTimeout(t);
+    }
+  }, [visible]);
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+      <View style={mv.overlay}>
+        <View style={mv.card}>
+          {/* X close */}
+          <Pressable onPress={onClose} hitSlop={12} style={mv.closeBtn}>
+            <View style={mv.closeX1} />
+            <View style={mv.closeX2} />
+          </Pressable>
+
+          {/* Lock icon circle */}
+          <View style={mv.iconCircle}>
+            <ModalLockIcon />
+          </View>
+
+          {/* Title */}
+          <Text style={mv.title}>Verification Code</Text>
+
+          {/* Subtitle + email */}
+          <Text style={mv.sub}>We've sent a 6-digit code to your email</Text>
+          <Text style={mv.emailHighlight} numberOfLines={1}>{email}</Text>
+
+          {/* 6 digit boxes */}
+          <Pressable style={mv.boxesRow} onPress={() => hiddenInputRef.current?.focus()}>
+            {digits.map((d, i) => (
+              <View
+                key={i}
+                style={[
+                  mv.digitBox,
+                  i === activeIdx && mv.digitBoxActive,
+                  !!error && mv.digitBoxError,
+                ]}
+              >
+                <Text style={mv.digitText}>{d}</Text>
+              </View>
+            ))}
+          </Pressable>
+
+          {/* Hidden input */}
+          <TextInput
+            ref={hiddenInputRef}
+            style={mv.hiddenInput}
+            value={code}
+            onChangeText={(t) => onCodeChange(t.replace(/[^0-9]/g, "").slice(0, 6))}
+            keyboardType="number-pad"
+            maxLength={6}
+            caretHidden
+          />
+
+          {/* Error or expiry line */}
+          {error ? (
+            <Text style={mv.errorText}>{error}</Text>
+          ) : timerLabel ? (
+            <Text style={mv.timerText}>
+              Code expires in <Text style={mv.timerHighlight}>{timerLabel}</Text>
+            </Text>
+          ) : (
+            <View style={{ height: 20 }} />
+          )}
+
+          {/* Verify button */}
+          <Pressable
+            style={[mv.verifyBtn, !canVerify && mv.verifyBtnDisabled]}
+            onPress={onVerify}
+            disabled={!canVerify}
+          >
+            {verifyLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={mv.verifyBtnText}>Verify Code</Text>
+            )}
+          </Pressable>
+
+          {/* Resend — always visible, grayed during cooldown */}
+          <Pressable
+            onPress={onResend}
+            disabled={cooldown > 0 || sendLoading}
+            hitSlop={8}
+            style={mv.resendBtn}
+          >
+            <Text style={[mv.resendText, (cooldown > 0 || sendLoading) && mv.resendDisabled]}>
+              {sendLoading ? "Sending…" : "Resend code"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const mv = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.78)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#0E1525",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 24,
+    alignItems: "center",
+  },
+  closeBtn: {
+    position: "absolute",
+    top: 14,
+    right: 14,
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeX1: {
+    position: "absolute",
+    width: 16,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: "rgba(255,255,255,0.45)",
+    transform: [{ rotate: "45deg" }],
+  },
+  closeX2: {
+    position: "absolute",
+    width: 16,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: "rgba(255,255,255,0.45)",
+    transform: [{ rotate: "-45deg" }],
+  },
+  iconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(255,101,0,0.12)",
+    borderWidth: 2,
+    borderColor: "rgba(255,101,0,0.30)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  title: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 18,
+    color: "#fff",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  sub: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: "rgba(255,255,255,0.50)",
+    textAlign: "center",
+    lineHeight: 18,
+    marginBottom: 2,
+  },
+  emailHighlight: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 13,
+    color: "#fff",
+    textAlign: "center",
+    marginBottom: 18,
+  },
+  boxesRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  digitBox: {
+    width: 42,
+    height: 50,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  digitBoxActive: {
+    borderColor: ORANGE,
+    backgroundColor: "rgba(255,101,0,0.08)",
+  },
+  digitBoxError: {
+    borderColor: "rgba(239,68,68,0.55)",
+    backgroundColor: "rgba(239,68,68,0.05)",
+  },
+  digitText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 20,
+    color: "#fff",
+  },
+  hiddenInput: {
+    position: "absolute",
+    opacity: 0,
+    width: 1,
+    height: 1,
+  },
+  errorText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: "#FCA5A5",
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  timerText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: "rgba(255,255,255,0.45)",
+    textAlign: "center",
+    marginTop: 10,
+    marginBottom: 14,
+  },
+  timerHighlight: {
+    fontFamily: "Poppins_600SemiBold",
+    color: ORANGE,
+  },
+  verifyBtn: {
+    backgroundColor: ORANGE,
+    borderRadius: 999,
+    height: 50,
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  verifyBtnDisabled: {
+    opacity: 0.38,
+  },
+  verifyBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 15,
+    color: "#fff",
+  },
+  resendBtn: {
+    paddingVertical: 4,
+  },
+  resendText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: "rgba(255,255,255,0.70)",
+    textAlign: "center",
+  },
+  resendDisabled: {
+    color: "rgba(255,255,255,0.28)",
+  },
+});
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+
+function validateFirstName(v: string): string | undefined {
+  const t = v.trim();
+  if (!t) return "First name is required.";
+  if (t.length < 2) return "First name must be at least 2 characters.";
+}
+
+function validateLastName(v: string): string | undefined {
+  const t = v.trim();
+  if (!t) return "Last name is required.";
+  if (t.length < 2) return "Last name must be at least 2 characters.";
+}
+
+function validateEmail(v: string): string | undefined {
+  const t = v.trim();
+  if (!t) return "Email address is required.";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) return "Please enter a valid email address.";
+}
+
+function validatePhone(v: string, dialCode: string): string | undefined {
+  const t = v.trim();
+  if (!t) return "Phone number is required.";
+  if (/[^0-9]/.test(t)) return "Digits only — no +, spaces, or letters.";
+  if (dialCode === "+49") {
+    const local = t.startsWith("0") ? t.slice(1) : t;
+    if (local.length !== 11) return "Enter 11 digits after the leading 0 (German number).";
+    return undefined;
+  }
+  if (dialCode === "+216") {
+    if (t.length !== 8) return "Tunisian number must be exactly 8 digits.";
+    return undefined;
+  }
+  if (t.length < 5) return "Phone number is too short.";
+  if (t.length > 15) return "Phone number is too long.";
+}
+
+function validatePostalCode(v: string): string | undefined {
+  const t = v.trim();
+  if (!t) return "Postal code is required.";
+  if (!/^\d{5}$/.test(t)) return "Postal code must be exactly 5 digits.";
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
+
+type FormErrors = {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  postalCode?: string;
+  driverType?: string;
+};
 
 export default function RegisterDriverStep1Screen() {
   const router = useRouter();
@@ -715,41 +1089,145 @@ export default function RegisterDriverStep1Screen() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [postalCode, setPostalCode] = useState("");
-  const [driverType, setDriverType] = useState<DriverType>("company_car");
+  const [driverType, setDriverType] = useState<DriverType | null>(null);
   const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
   const [showPicker, setShowPicker] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errors, setErrors] = useState<FormErrors>({});
 
-  function handleContinue() {
-    setErrorMsg(null);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [verifyError, setVerifyError] = useState<string | undefined>();
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [sendLoading, setSendLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    if (!firstName.trim() || !lastName.trim()) {
-      setErrorMsg("Please enter your first and last name.");
-      return;
-    }
-    if (!email.trim()) {
-      setErrorMsg("Please enter your email address.");
-      return;
-    }
-    if (!postalCode.trim()) {
-      setErrorMsg("Please enter your postal code.");
-      return;
-    }
+  const lastNameRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInput>(null);
+  const phoneRef = useRef<TextInput>(null);
+  const postalRef = useRef<TextInput>(null);
 
-    const fullPhone = phone.trim() ? `${country.dial}${phone.trim()}` : "";
+  useEffect(() => {
+    return () => {
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
+
+  const isFormValid = useMemo(
+    () =>
+      !validateFirstName(firstName) &&
+      !validateLastName(lastName) &&
+      !validateEmail(email) &&
+      !validatePhone(phone, country.dial) &&
+      !validatePostalCode(postalCode) &&
+      Boolean(driverType),
+    [firstName, lastName, email, phone, postalCode, driverType, country.dial],
+  );
+
+  function setFieldError(field: keyof FormErrors, error: string | undefined) {
+    setErrors((prev) => {
+      if (error) return { ...prev, [field]: error };
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
+
+  function startCooldown() {
+    setCooldown(60);
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownRef.current!);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  async function handleContinue() {
+    const errs: FormErrors = {};
+    const e1 = validateFirstName(firstName); if (e1) errs.firstName = e1;
+    const e2 = validateLastName(lastName); if (e2) errs.lastName = e2;
+    const e3 = validateEmail(email); if (e3) errs.email = e3;
+    const e4 = validatePhone(phone, country.dial); if (e4) errs.phone = e4;
+    const e5 = validatePostalCode(postalCode); if (e5) errs.postalCode = e5;
+    if (!driverType) errs.driverType = "Please select a driver type.";
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    const ph = phone.trim();
+    const dialCode = country.dial;
+    const normalizedLocal = dialCode === "+49" && ph.startsWith("0") ? ph.slice(1) : ph;
+    const fullPhone = `${dialCode}${normalizedLocal}`;
 
     registrationStore.set({
       email: email.trim(),
       postal_code: postalCode.trim(),
       full_name: `${firstName.trim()} ${lastName.trim()}`,
       phone: fullPhone,
-      car_type: driverType,
+      car_type: driverType as DriverType,
     });
 
-    if (driverType === "own_car") {
-      router.push("/register/own-car-details" as any);
-    } else {
-      router.push("/register/upload-documents" as any);
+    setSendLoading(true);
+    try {
+      await sendEmailVerificationCode(email.trim());
+      setVerifyCode("");
+      setVerifyError(undefined);
+      setShowVerifyModal(true);
+      startCooldown();
+    } catch (err) {
+      setErrors((prev) => ({
+        ...prev,
+        email: err instanceof Error ? err.message : "Failed to send verification code.",
+      }));
+    } finally {
+      setSendLoading(false);
+    }
+  }
+
+  async function handleResend() {
+    if (cooldown > 0 || sendLoading) return;
+    setSendLoading(true);
+    try {
+      await sendEmailVerificationCode(email.trim());
+      setVerifyCode("");
+      setVerifyError(undefined);
+      startCooldown();
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Failed to resend code.");
+    } finally {
+      setSendLoading(false);
+    }
+  }
+
+  async function handleVerify() {
+    if (verifyCode.length !== 6 || verifyLoading) return;
+    setVerifyLoading(true);
+    setVerifyError(undefined);
+    try {
+      const result = await verifyEmailCode(email.trim(), verifyCode);
+      if (result.verified && result.auth_user_id && result.access_token) {
+        registrationStore.setVerified({
+          auth_user_id: result.auth_user_id,
+          access_token: result.access_token,
+        });
+        setShowVerifyModal(false);
+        if (driverType === "own_car") {
+          router.push("/register/own-car-details" as any);
+        } else {
+          router.push("/register/upload-documents" as any);
+        }
+      } else {
+        setVerifyError(result.message || "Verification failed. Please try again.");
+      }
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Wrong code. Please try again.");
+    } finally {
+      setVerifyLoading(false);
     }
   }
 
@@ -786,51 +1264,77 @@ export default function RegisterDriverStep1Screen() {
 
             {/* ── First name ─────────────────────────────────────────── */}
             <Text style={[s.label, s.labelFirst]}>First name</Text>
-            <View style={s.inputRow}>
-              <View style={s.inputIcon}><PersonIcon /></View>
+            <View style={[s.inputRow, errors.firstName ? s.inputRowError : null]}>
+              <View style={s.inputIcon}><PersonIcon color={errors.firstName ? "#FCA5A5" : IC} /></View>
               <TextInput
                 style={s.inputText}
                 placeholder="Enter first name"
                 placeholderTextColor="rgba(255,255,255,0.28)"
                 value={firstName}
                 onChangeText={setFirstName}
+                onBlur={() => setFieldError("firstName", validateFirstName(firstName))}
                 autoCapitalize="words"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  const err = validateFirstName(firstName);
+                  setFieldError("firstName", err);
+                  if (!err) lastNameRef.current?.focus();
+                }}
               />
             </View>
+            {errors.firstName ? <Text style={s.fieldError}>{errors.firstName}</Text> : null}
 
             {/* ── Last name ──────────────────────────────────────────── */}
             <Text style={[s.label, s.labelGap]}>Last name</Text>
-            <View style={s.inputRow}>
-              <View style={s.inputIcon}><PersonIcon /></View>
+            <View style={[s.inputRow, errors.lastName ? s.inputRowError : null]}>
+              <View style={s.inputIcon}><PersonIcon color={errors.lastName ? "#FCA5A5" : IC} /></View>
               <TextInput
+                ref={lastNameRef}
                 style={s.inputText}
                 placeholder="Enter last name"
                 placeholderTextColor="rgba(255,255,255,0.28)"
                 value={lastName}
                 onChangeText={setLastName}
+                onBlur={() => setFieldError("lastName", validateLastName(lastName))}
                 autoCapitalize="words"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  const err = validateLastName(lastName);
+                  setFieldError("lastName", err);
+                  if (!err) emailRef.current?.focus();
+                }}
               />
             </View>
+            {errors.lastName ? <Text style={s.fieldError}>{errors.lastName}</Text> : null}
 
             {/* ── Email ──────────────────────────────────────────────── */}
             <Text style={[s.label, s.labelGap]}>Email address</Text>
-            <View style={s.inputRow}>
-              <View style={s.inputIcon}><MailIcon /></View>
+            <View style={[s.inputRow, errors.email ? s.inputRowError : null]}>
+              <View style={s.inputIcon}><MailIcon color={errors.email ? "#FCA5A5" : IC} /></View>
               <TextInput
+                ref={emailRef}
                 style={s.inputText}
                 placeholder="Enter your email"
                 placeholderTextColor="rgba(255,255,255,0.28)"
                 value={email}
                 onChangeText={setEmail}
+                onBlur={() => setFieldError("email", validateEmail(email))}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  const err = validateEmail(email);
+                  setFieldError("email", err);
+                  if (!err) phoneRef.current?.focus();
+                }}
               />
             </View>
+            {errors.email ? <Text style={s.fieldError}>{errors.email}</Text> : null}
 
             {/* ── Phone ──────────────────────────────────────────────── */}
             <Text style={[s.label, s.labelGap]}>Phone number</Text>
-            <View style={s.inputRow}>
+            <View style={[s.inputRow, errors.phone ? s.inputRowError : null]}>
               {/* Country code selector */}
               <Pressable
                 style={s.phonePrefix}
@@ -843,30 +1347,48 @@ export default function RegisterDriverStep1Screen() {
                 <View style={s.phoneDivider} />
               </Pressable>
               <TextInput
+                ref={phoneRef}
                 style={[s.inputText, { flex: 1 }]}
-                placeholder="Enter phone number"
+                placeholder="Local number (digits only)"
                 placeholderTextColor="rgba(255,255,255,0.28)"
                 value={phone}
                 onChangeText={setPhone}
-                keyboardType="phone-pad"
+                onBlur={() => setFieldError("phone", validatePhone(phone, country.dial))}
+                keyboardType="number-pad"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  const err = validatePhone(phone, country.dial);
+                  setFieldError("phone", err);
+                  if (!err) postalRef.current?.focus();
+                }}
               />
             </View>
+            {errors.phone ? <Text style={s.fieldError}>{errors.phone}</Text> : null}
 
             {/* ── Postal code ────────────────────────────────────────── */}
             <Text style={[s.label, s.labelGap]}>Postal code</Text>
-            <View style={s.inputRow}>
-              <View style={s.inputIcon}><LocationIcon /></View>
+            <View style={[s.inputRow, errors.postalCode ? s.inputRowError : null]}>
+              <View style={s.inputIcon}><LocationIcon color={errors.postalCode ? "#FCA5A5" : IC} /></View>
               <TextInput
+                ref={postalRef}
                 style={[s.inputText, { flex: 1 }]}
                 placeholder="Enter postal code"
                 placeholderTextColor="rgba(255,255,255,0.28)"
                 value={postalCode}
                 onChangeText={setPostalCode}
-                keyboardType="numeric"
+                onBlur={() => setFieldError("postalCode", validatePostalCode(postalCode))}
+                keyboardType="number-pad"
                 autoCapitalize="none"
                 autoCorrect={false}
+                maxLength={5}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  const err = validatePostalCode(postalCode);
+                  setFieldError("postalCode", err);
+                }}
               />
             </View>
+            {errors.postalCode ? <Text style={s.fieldError}>{errors.postalCode}</Text> : null}
 
             {/* ── Driver type ────────────────────────────────────────── */}
             <Text style={s.driverTypeHeading}>Driver type</Text>
@@ -876,7 +1398,7 @@ export default function RegisterDriverStep1Screen() {
               title="Own car driver"
               subtitle={"Higher rates · Cover own car costs"}
               selected={driverType === "own_car"}
-              onPress={() => setDriverType("own_car")}
+              onPress={() => { setDriverType("own_car"); setFieldError("driverType", undefined); }}
             />
 
             <DriverTypeCard
@@ -884,22 +1406,22 @@ export default function RegisterDriverStep1Screen() {
               title="Company car driver"
               subtitle={"Standard rate · Company provides car"}
               selected={driverType === "company_car"}
-              onPress={() => setDriverType("company_car")}
+              onPress={() => { setDriverType("company_car"); setFieldError("driverType", undefined); }}
             />
 
-            {/* ── Error message ───────────────────────────────────────── */}
-            {errorMsg ? (
-              <View style={s.errorBox}>
-                <Text style={s.errorText}>{errorMsg}</Text>
-              </View>
-            ) : null}
+            {errors.driverType ? <Text style={s.fieldError}>{errors.driverType}</Text> : null}
 
             {/* ── Continue ───────────────────────────────────────────── */}
             <Pressable
-              style={s.continueBtn}
+              style={[s.continueBtn, (!isFormValid || sendLoading) && s.continueBtnDisabled]}
               onPress={handleContinue}
+              disabled={!isFormValid || sendLoading}
             >
-              <Text style={s.continueBtnText}>Continue →</Text>
+              {sendLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={s.continueBtnText}>Continue →</Text>
+              )}
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -911,6 +1433,21 @@ export default function RegisterDriverStep1Screen() {
         selected={country}
         onSelect={setCountry}
         onClose={() => setShowPicker(false)}
+      />
+
+      {/* ── Email verification modal ───────────────────────────────── */}
+      <EmailVerifyModal
+        visible={showVerifyModal}
+        email={email.trim()}
+        code={verifyCode}
+        onCodeChange={setVerifyCode}
+        error={verifyError}
+        verifyLoading={verifyLoading}
+        sendLoading={sendLoading}
+        cooldown={cooldown}
+        onVerify={handleVerify}
+        onResend={handleResend}
+        onClose={() => setShowVerifyModal(false)}
       />
     </>
   );
@@ -972,12 +1509,23 @@ const s = StyleSheet.create({
     height: 52,
     paddingHorizontal: 14,
   },
+  inputRowError: {
+    borderColor: "rgba(239,68,68,0.60)",
+    backgroundColor: "rgba(239,68,68,0.05)",
+  },
   inputIcon: { marginRight: 10 },
   inputText: {
     flex: 1,
     fontFamily: "Poppins_400Regular",
     fontSize: 14,
     color: "#fff",
+  },
+  fieldError: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: "#FCA5A5",
+    marginTop: 5,
+    marginLeft: 2,
   },
 
   phonePrefix: {
@@ -1007,22 +1555,6 @@ const s = StyleSheet.create({
     marginBottom: 14,
   },
 
-  errorBox: {
-    backgroundColor: "rgba(239,68,68,0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.40)",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginTop: 20,
-  },
-  errorText: {
-    fontFamily: "Poppins_400Regular",
-    fontSize: 13,
-    color: "#FCA5A5",
-    lineHeight: 18,
-  },
-
   continueBtn: {
     backgroundColor: ORANGE,
     borderRadius: 999,
@@ -1030,6 +1562,9 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginTop: 16,
+  },
+  continueBtnDisabled: {
+    opacity: 0.4,
   },
   continueBtnText: {
     fontFamily: "Poppins_600SemiBold",

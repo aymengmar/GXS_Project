@@ -13,6 +13,9 @@ type RegistrationData = {
   phone: string;
   car_type: "own_car" | "company_car";
   own_car_details?: OwnCarDetails;
+  email_verified?: boolean;
+  auth_user_id?: string;
+  access_token?: string;
 };
 
 let _pending: RegistrationData | null = null;
@@ -27,6 +30,11 @@ export const registrationStore = {
   setOwnCarDetails(details: OwnCarDetails) {
     if (_pending) {
       _pending = { ..._pending, own_car_details: details };
+    }
+  },
+  setVerified(data: { auth_user_id: string; access_token: string }) {
+    if (_pending) {
+      _pending = { ..._pending, email_verified: true, ...data };
     }
   },
   clear() {

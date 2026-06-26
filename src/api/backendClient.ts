@@ -1,6 +1,7 @@
-// Backend base URL — update this to match your LAN IP when testing on a physical device
+// USB (adb reverse tcp:8000 tcp:8000): use 127.0.0.1  |  WiFi: use LAN IP
 export const BACKEND_BASE_URL = "http://127.0.0.1:8000";
-//export const BACKEND_BASE_URL = "http://192.168.2.129:8000";
+//export const BACKEND_BASE_URL = "http://192.168.2.129:8000"; // WiFi
+
 type OwnCarDetails = {
   vehicle_make_model: string;
   plate_number: string;
@@ -60,4 +61,62 @@ export async function registerDriver(
   }
 
   return data as RegisterResponse;
+}
+
+type SendCodeResponse = {
+  message: string;
+};
+
+type VerifyCodeResponse = {
+  verified: boolean;
+  message: string;
+  auth_user_id?: string;
+  access_token?: string;
+};
+
+function extractErrorMessage(data: unknown, fallback: string): string {
+  const detail = (data as { detail?: unknown })?.detail;
+  if (Array.isArray(detail))
+    return detail.map((e: { msg: string }) => e.msg).join(", ");
+  if (typeof detail === "string") return detail;
+  return fallback;
+}
+
+export async function sendEmailVerificationCode(
+  email: string,
+): Promise<SendCodeResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/auth/email-verification/send-code`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok)
+    throw new Error(
+      extractErrorMessage(data, "Failed to send verification code."),
+    );
+  return data as SendCodeResponse;
+}
+
+export async function verifyEmailCode(
+  email: string,
+  code: string,
+): Promise<VerifyCodeResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/auth/email-verification/verify-code`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok)
+    throw new Error(
+      extractErrorMessage(data, "Verification failed. Please try again."),
+    );
+  return data as VerifyCodeResponse;
 }

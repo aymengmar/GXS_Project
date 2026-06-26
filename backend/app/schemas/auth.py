@@ -11,7 +11,7 @@ class OwnCarDetails(BaseModel):
 
 
 class DriverRegisterRequest(BaseModel):
-    email: EmailStr
+    access_token: str
     postal_code: str
     full_name: str
     phone: str | None = None
@@ -58,3 +58,41 @@ class DriverLoginResponse(BaseModel):
     car_type: str
     status: str
     external_driver_id: str | None
+
+
+class EmailVerificationSendRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class EmailVerificationSendResponse(BaseModel):
+    message: str
+
+
+class EmailVerificationVerifyRequest(BaseModel):
+    email: str
+    code: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @field_validator("code")
+    @classmethod
+    def code_must_be_digits(cls, v: str) -> str:
+        v = v.strip()
+        if not v.isdigit() or len(v) != 6:
+            raise ValueError("code must be exactly 6 digits")
+        return v
+
+
+class EmailVerificationVerifyResponse(BaseModel):
+    verified: bool
+    message: str
+    auth_user_id: str | None = None
+    access_token: str | None = None

@@ -1,82 +1,74 @@
-import secrets
-import string
-
 from fastapi import HTTPException, status
 
 from app.db.supabase import supabase_admin, supabase_auth
-from app.schemas.auth import DriverLoginRequest, DriverLoginResponse, DriverRegisterRequest, DriverRegisterResponse
-
-_PASSWORD_ALPHABET = string.ascii_letters + string.digits + string.punctuation
-
-
-def _generate_internal_password() -> str:
-    return "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(48))
+from app.schemas.auth import (
+    DriverLoginRequest,
+    DriverLoginResponse,
+    DriverRegisterRequest,
+    DriverRegisterResponse,
+    EmailVerificationSendResponse,
+    EmailVerificationVerifyResponse,
+)
 
 
 def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
-    internal_password = _generate_internal_password()
-
-    # Create auth user via admin API (service-role key required).
-    # email_confirm=True skips the confirmation email flow for internal onboarding.
-    # The password is generated server-side and never returned to the client.
+    # Validate the OTP-issued access_token and extract the verified auth user.
     try:
-        auth_response = supabase_admin.auth.admin.create_user(
-            {
-                "email": payload.email,
-                "password": internal_password,
-                "email_confirm": True,
-            }
-        )
+        user_response = supabase_admin.auth.get_user(payload.access_token)
     except Exception as exc:
-        error_message = str(exc)
-        if "already been registered" in error_message or "already exists" in error_message:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="An account with this email already exists.",
-            )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Auth user creation failed: {error_message}",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access token.",
+        ) from exc
+
+    if user_response.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired access token.",
         )
 
-    if auth_response.user is None:
+    auth_user = user_response.user
+    auth_user_id = str(auth_user.id)
+    email = auth_user.email
+
+    # Guard against duplicate profile for the same auth user.
+    existing = (
+        supabase_admin.table("driver_profiles")
+        .select("id")
+        .eq("auth_user_id", auth_user_id)
+        .execute()
+    )
+    if existing.data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Auth user creation failed. Email may already be in use.",
+            detail="A driver profile already exists for this account.",
         )
 
-    auth_user_id = str(auth_response.user.id)
-
-    # Insert driver profile — the internal password is never stored here
+    # Insert the driver profile.
     try:
         profile_result = (
             supabase_admin.table("driver_profiles")
             .insert(
                 {
                     "auth_user_id": auth_user_id,
-                    "email": payload.email,
+                    "email": email,
                     "full_name": payload.full_name,
                     "phone": payload.phone,
                     "car_type": payload.car_type,
                     "postal_code": payload.postal_code,
                     "status": "pending",
+                    "external_driver_id": None,
                 }
             )
             .execute()
         )
     except Exception as exc:
-        # Clean up the orphan auth user before raising
-        try:
-            supabase_admin.auth.admin.delete_user(auth_user_id)
-        except Exception:
-            pass  # Best-effort cleanup; log in production
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Driver profile creation failed. Auth user has been rolled back: {exc}",
+            detail=f"Driver profile creation failed: {exc}",
         )
 
-    # Save own-car details when car_type is own_car
+    # Save own-car details when car_type is own_car.
     if payload.car_type == "own_car" and payload.own_car_details is not None:
         driver_profile_id = str(profile_result.data[0]["id"])
         details = payload.own_car_details
@@ -93,13 +85,9 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
                 }
             ).execute()
         except Exception as exc:
-            # Roll back auth user and profile
+            # Roll back the profile only — the auth user is external and must not be deleted.
             try:
                 supabase_admin.table("driver_profiles").delete().eq("auth_user_id", auth_user_id).execute()
-            except Exception:
-                pass
-            try:
-                supabase_admin.auth.admin.delete_user(auth_user_id)
             except Exception:
                 pass
 
@@ -179,4 +167,50 @@ def login_driver(payload: DriverLoginRequest) -> DriverLoginResponse:
         car_type=profile["car_type"],
         status=driver_status,
         external_driver_id=profile.get("external_driver_id"),
+    )
+
+
+def send_email_verification_code(email: str) -> EmailVerificationSendResponse:
+    try:
+        supabase_auth.auth.sign_in_with_otp(
+            {
+                "email": email,
+                "options": {"should_create_user": True},
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to send verification code: {exc}",
+        ) from exc
+
+    return EmailVerificationSendResponse(message="Verification code sent.")
+
+
+def verify_email_otp(email: str, code: str) -> EmailVerificationVerifyResponse:
+    try:
+        response = supabase_auth.auth.verify_otp(
+            {
+                "email": email,
+                "token": code,
+                "type": "email",
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code.",
+        ) from exc
+
+    if response.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code.",
+        )
+
+    return EmailVerificationVerifyResponse(
+        verified=True,
+        message="Email verified successfully.",
+        auth_user_id=str(response.user.id),
+        access_token=response.session.access_token if response.session else None,
     )
