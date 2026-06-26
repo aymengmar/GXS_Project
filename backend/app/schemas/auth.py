@@ -1,5 +1,13 @@
 from typing import Literal
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
+
+
+class OwnCarDetails(BaseModel):
+    vehicle_make_model: str
+    plate_number: str
+    insurance_provider: str
+    insurance_number: str
+    vehicle_year: int
 
 
 class DriverRegisterRequest(BaseModel):
@@ -8,6 +16,7 @@ class DriverRegisterRequest(BaseModel):
     full_name: str
     phone: str | None = None
     car_type: Literal["own_car", "company_car"]
+    own_car_details: OwnCarDetails | None = None
 
     @field_validator("password")
     @classmethod
@@ -22,6 +31,12 @@ class DriverRegisterRequest(BaseModel):
         if not v.strip():
             raise ValueError("full_name must not be empty")
         return v.strip()
+
+    @model_validator(mode="after")
+    def own_car_details_required_for_own_car(self) -> "DriverRegisterRequest":
+        if self.car_type == "own_car" and self.own_car_details is None:
+            raise ValueError("own_car_details is required when car_type is own_car")
+        return self
 
 
 class DriverRegisterResponse(BaseModel):

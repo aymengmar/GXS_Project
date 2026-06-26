@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
+import { registrationStore } from "@/store/registrationStore";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -477,9 +478,16 @@ export default function OwnCarDetailsScreen() {
             {/* ── Continue ────────────────────────────────────────── */}
             <Pressable
               style={s.continueBtn}
-              onPress={() =>
-              router.push("/register/upload-documents?from=own-car" as any)
-            }
+              onPress={() => {
+                registrationStore.setOwnCarDetails({
+                  vehicle_make_model: make.trim(),
+                  plate_number: plate.trim(),
+                  insurance_provider: insuranceProvider.trim(),
+                  insurance_number: insuranceNumber.trim(),
+                  vehicle_year: vehicleYear.trim(),
+                });
+                router.push("/register/upload-documents?from=own-car" as any);
+              }}
             >
               <Text style={s.continueBtnText}>Continue to documents →</Text>
             </Pressable>

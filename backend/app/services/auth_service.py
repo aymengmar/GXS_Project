@@ -37,16 +37,20 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
 
     # Insert driver profile — password is never stored here
     try:
-        supabase_admin.table("driver_profiles").insert(
-            {
-                "auth_user_id": auth_user_id,
-                "email": payload.email,
-                "full_name": payload.full_name,
-                "phone": payload.phone,
-                "car_type": payload.car_type,
-                "status": "pending",
-            }
-        ).execute()
+        profile_result = (
+            supabase_admin.table("driver_profiles")
+            .insert(
+                {
+                    "auth_user_id": auth_user_id,
+                    "email": payload.email,
+                    "full_name": payload.full_name,
+                    "phone": payload.phone,
+                    "car_type": payload.car_type,
+                    "status": "pending",
+                }
+            )
+            .execute()
+        )
     except Exception as exc:
         # Clean up the orphan auth user before raising
         try:
@@ -58,6 +62,38 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Driver profile creation failed. Auth user has been rolled back: {exc}",
         )
+
+    # Save own-car details when car_type is own_car
+    if payload.car_type == "own_car" and payload.own_car_details is not None:
+        driver_profile_id = str(profile_result.data[0]["id"])
+        details = payload.own_car_details
+        try:
+            supabase_admin.table("own_car_details").insert(
+                {
+                    "driver_profile_id": driver_profile_id,
+                    "auth_user_id": auth_user_id,
+                    "vehicle_make_model": details.vehicle_make_model,
+                    "plate_number": details.plate_number,
+                    "insurance_provider": details.insurance_provider,
+                    "insurance_number": details.insurance_number,
+                    "vehicle_year": details.vehicle_year,
+                }
+            ).execute()
+        except Exception as exc:
+            # Roll back auth user and profile
+            try:
+                supabase_admin.table("driver_profiles").delete().eq("auth_user_id", auth_user_id).execute()
+            except Exception:
+                pass
+            try:
+                supabase_admin.auth.admin.delete_user(auth_user_id)
+            except Exception:
+                pass
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Own-car details save failed. Registration has been rolled back: {exc}",
+            )
 
     return DriverRegisterResponse(
         message="Registration submitted. Waiting for approval.",
