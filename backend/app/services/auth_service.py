@@ -1,17 +1,29 @@
+import secrets
+import string
+
 from fastapi import HTTPException, status
 
 from app.db.supabase import supabase_admin, supabase_auth
 from app.schemas.auth import DriverLoginRequest, DriverLoginResponse, DriverRegisterRequest, DriverRegisterResponse
 
+_PASSWORD_ALPHABET = string.ascii_letters + string.digits + string.punctuation
+
+
+def _generate_internal_password() -> str:
+    return "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(48))
+
 
 def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
-    # Create auth user via admin API (service-role key required)
-    # email_confirm=True skips the confirmation email flow for internal onboarding
+    internal_password = _generate_internal_password()
+
+    # Create auth user via admin API (service-role key required).
+    # email_confirm=True skips the confirmation email flow for internal onboarding.
+    # The password is generated server-side and never returned to the client.
     try:
         auth_response = supabase_admin.auth.admin.create_user(
             {
                 "email": payload.email,
-                "password": payload.password,
+                "password": internal_password,
                 "email_confirm": True,
             }
         )
@@ -35,7 +47,7 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
 
     auth_user_id = str(auth_response.user.id)
 
-    # Insert driver profile — password is never stored here
+    # Insert driver profile — the internal password is never stored here
     try:
         profile_result = (
             supabase_admin.table("driver_profiles")
@@ -46,6 +58,7 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
                     "full_name": payload.full_name,
                     "phone": payload.phone,
                     "car_type": payload.car_type,
+                    "postal_code": payload.postal_code,
                     "status": "pending",
                 }
             )

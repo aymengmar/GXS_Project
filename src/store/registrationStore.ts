@@ -8,7 +8,7 @@ type OwnCarDetails = {
 
 type RegistrationData = {
   email: string;
-  password: string;
+  postal_code: string;
   full_name: string;
   phone: string;
   car_type: "own_car" | "company_car";

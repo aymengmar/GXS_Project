@@ -12,17 +12,18 @@ class OwnCarDetails(BaseModel):
 
 class DriverRegisterRequest(BaseModel):
     email: EmailStr
-    password: str
+    postal_code: str
     full_name: str
     phone: str | None = None
     car_type: Literal["own_car", "company_car"]
     own_car_details: OwnCarDetails | None = None
 
-    @field_validator("password")
+    @field_validator("postal_code")
     @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
+    def postal_code_valid(cls, v: str) -> str:
+        v = v.strip()
+        if not v.isdigit() or len(v) != 5:
+            raise ValueError("postal_code must be a 5-digit German postal code")
         return v
 
     @field_validator("full_name")

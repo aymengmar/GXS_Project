@@ -11,7 +11,7 @@ type OwnCarDetails = {
 
 type RegisterPayload = {
   email: string;
-  password: string;
+  postal_code: string;
   full_name: string;
   phone: string;
   car_type: "own_car" | "company_car";
@@ -28,7 +28,7 @@ export async function registerDriver(
 ): Promise<RegisterResponse> {
   const body: RegisterPayload = {
     email: payload.email,
-    password: payload.password,
+    postal_code: payload.postal_code,
     full_name: payload.full_name,
     phone: payload.phone,
     car_type: payload.car_type,

@@ -252,28 +252,6 @@ function MailIcon({ color = IC }: { color?: string }) {
   );
 }
 
-function LockIcon({ color = IC }: { color?: string }) {
-  return (
-    <View style={ic.lockWrap}>
-      <View style={[ic.lockShackle, { borderColor: color }]} />
-      <View style={[ic.lockBody, { borderColor: color }]}>
-        <View style={[ic.lockDot, { backgroundColor: color }]} />
-      </View>
-    </View>
-  );
-}
-
-function EyeIcon({ color = IC, off = false }: { color?: string; off?: boolean }) {
-  return (
-    <View style={ic.eyeWrap}>
-      <View style={[ic.eyeOval, { borderColor: color }]}>
-        <View style={[ic.eyePupil, { backgroundColor: color }]} />
-      </View>
-      {off && <View style={[ic.eyeStrike, { backgroundColor: color }]} />}
-    </View>
-  );
-}
-
 function LocationIcon({ color = IC }: { color?: string }) {
   return (
     <View style={ic.locWrap}>
@@ -366,16 +344,6 @@ const ic = StyleSheet.create({
   mailBody: { width: 18, height: 13, borderWidth: 1.5, borderRadius: 2, overflow: "hidden" },
   mailFlapL: { position: "absolute", top: -3, left: -3, width: 13, height: 10, borderRightWidth: 1.5, transform: [{ rotate: "22deg" }] },
   mailFlapR: { position: "absolute", top: -3, right: -3, width: 13, height: 10, borderLeftWidth: 1.5, transform: [{ rotate: "-22deg" }] },
-
-  lockWrap: { width: 18, height: 18, alignItems: "center", justifyContent: "flex-end" },
-  lockShackle: { width: 10, height: 7, borderTopWidth: 1.5, borderLeftWidth: 1.5, borderRightWidth: 1.5, borderTopLeftRadius: 5, borderTopRightRadius: 5 },
-  lockBody: { width: 16, height: 10, borderWidth: 1.5, borderRadius: 3, alignItems: "center", justifyContent: "center" },
-  lockDot: { width: 4, height: 4, borderRadius: 2 },
-
-  eyeWrap: { width: 18, height: 18, alignItems: "center", justifyContent: "center" },
-  eyeOval: { width: 18, height: 11, borderWidth: 1.5, borderRadius: 9, alignItems: "center", justifyContent: "center" },
-  eyePupil: { width: 5, height: 5, borderRadius: 3 },
-  eyeStrike: { position: "absolute", width: 22, height: 1.5, borderRadius: 1, transform: [{ rotate: "-38deg" }] },
 
   locWrap: { width: 14, height: 18, alignItems: "center" },
   locCircle: { width: 12, height: 12, borderRadius: 6, borderWidth: 1.5 },
@@ -746,8 +714,7 @@ export default function RegisterDriverStep1Screen() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [postalCode, setPostalCode] = useState("");
   const [driverType, setDriverType] = useState<DriverType>("company_car");
   const [country, setCountry] = useState<Country>(DEFAULT_COUNTRY);
   const [showPicker, setShowPicker] = useState(false);
@@ -764,8 +731,8 @@ export default function RegisterDriverStep1Screen() {
       setErrorMsg("Please enter your email address.");
       return;
     }
-    if (password.length < 8) {
-      setErrorMsg("Password must be at least 8 characters.");
+    if (!postalCode.trim()) {
+      setErrorMsg("Please enter your postal code.");
       return;
     }
 
@@ -773,7 +740,7 @@ export default function RegisterDriverStep1Screen() {
 
     registrationStore.set({
       email: email.trim(),
-      password,
+      postal_code: postalCode.trim(),
       full_name: `${firstName.trim()} ${lastName.trim()}`,
       phone: fullPhone,
       car_type: driverType,
@@ -885,31 +852,20 @@ export default function RegisterDriverStep1Screen() {
               />
             </View>
 
-            {/* ── Password ───────────────────────────────────────────── */}
-            <Text style={[s.label, s.labelGap]}>Password</Text>
+            {/* ── Postal code ────────────────────────────────────────── */}
+            <Text style={[s.label, s.labelGap]}>Postal code</Text>
             <View style={s.inputRow}>
-              <View style={s.inputIcon}><LockIcon /></View>
+              <View style={s.inputIcon}><LocationIcon /></View>
               <TextInput
                 style={[s.inputText, { flex: 1 }]}
-                placeholder="Create password"
+                placeholder="Enter postal code"
                 placeholderTextColor="rgba(255,255,255,0.28)"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
+                value={postalCode}
+                onChangeText={setPostalCode}
+                keyboardType="numeric"
                 autoCapitalize="none"
                 autoCorrect={false}
               />
-              <Pressable onPress={() => setShowPassword((v) => !v)} hitSlop={8}>
-                <EyeIcon off={!showPassword} />
-              </Pressable>
-            </View>
-
-            {/* ── City ───────────────────────────────────────────────── */}
-            <Text style={[s.label, s.labelGap]}>City</Text>
-            <View style={s.inputRow}>
-              <View style={s.inputIcon}><LocationIcon /></View>
-              <Text style={[s.inputText, s.cityValue]}>Hamburg, Germany</Text>
-              <ChevronDown />
             </View>
 
             {/* ── Driver type ────────────────────────────────────────── */}
@@ -1041,11 +997,6 @@ const s = StyleSheet.create({
     height: 18,
     backgroundColor: "rgba(255,255,255,0.18)",
     marginLeft: 8,
-  },
-
-  cityValue: {
-    flex: 1,
-    color: "#fff",
   },
 
   driverTypeHeading: {
