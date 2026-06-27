@@ -263,6 +263,7 @@ type Props = {
   onTakePhoto: () => void;
   onChooseFromGallery: () => void;
   onUploadPdf: () => void;
+  showPdf?: boolean;
 };
 
 export default function DocumentUploadOptionsSheet({
@@ -272,6 +273,7 @@ export default function DocumentUploadOptionsSheet({
   onTakePhoto,
   onChooseFromGallery,
   onUploadPdf,
+  showPdf = true,
 }: Props) {
   return (
     <Modal
@@ -309,15 +311,18 @@ export default function DocumentUploadOptionsSheet({
               title="Choose image from phone"
               subtitle="Select an image from your gallery"
               onPress={onChooseFromGallery}
+              isLast={!showPdf}
             />
-            <OptionRow
-              iconBg="rgba(34,197,94,0.18)"
-              icon={<PdfIcon />}
-              title="Upload PDF file"
-              subtitle="Select a PDF file from your device"
-              onPress={onUploadPdf}
-              isLast
-            />
+            {showPdf && (
+              <OptionRow
+                iconBg="rgba(34,197,94,0.18)"
+                icon={<PdfIcon />}
+                title="Upload PDF file"
+                subtitle="Select a PDF file from your device"
+                onPress={onUploadPdf}
+                isLast
+              />
+            )}
           </View>
 
           {/* cancel */}

@@ -11,7 +11,8 @@ type OwnCarDetails = {
 };
 
 type RegisterPayload = {
-  email: string;
+  access_token?: string;
+  email?: string;
   postal_code: string;
   full_name: string;
   phone: string;
@@ -27,8 +28,8 @@ type RegisterResponse = {
 export async function registerDriver(
   payload: RegisterPayload,
 ): Promise<RegisterResponse> {
-  const body: RegisterPayload = {
-    email: payload.email,
+  const body: Omit<RegisterPayload, "email"> = {
+    access_token: payload.access_token,
     postal_code: payload.postal_code,
     full_name: payload.full_name,
     phone: payload.phone,
@@ -119,4 +120,42 @@ export async function verifyEmailCode(
       extractErrorMessage(data, "Verification failed. Please try again."),
     );
   return data as VerifyCodeResponse;
+}
+
+type UploadDocumentResponse = {
+  message: string;
+};
+
+export async function uploadDocument(
+  file: { uri: string; name: string; mimeType: string },
+  documentType: string,
+  accessToken: string,
+): Promise<UploadDocumentResponse> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    // XHR's native module handles the { uri, name, type } file object in React Native
+    (formData as any).append("file", { uri: file.uri, name: file.name, type: file.mimeType });
+    formData.append("document_type", documentType);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BACKEND_BASE_URL}/api/v1/driver-documents/upload`);
+    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data as UploadDocumentResponse);
+        } else {
+          reject(new Error(extractErrorMessage(data, "Document upload failed. Please try again.")));
+        }
+      } catch {
+        reject(new Error("Document upload failed. Please try again."));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload."));
+    xhr.ontimeout = () => reject(new Error("Upload timed out. Please try again."));
+    xhr.send(formData);
+  });
 }

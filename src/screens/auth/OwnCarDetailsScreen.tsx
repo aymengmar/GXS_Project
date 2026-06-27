@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { registrationStore } from "@/store/registrationStore";
 import {
   KeyboardAvoidingView,
@@ -418,37 +418,6 @@ function ChevronRight({ color = IC }: { color?: string }) {
   );
 }
 
-function SearchIcon() {
-  const c = "rgba(255,255,255,0.38)";
-  return (
-    <View style={{ width: 18, height: 18 }}>
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: 12,
-          height: 12,
-          borderRadius: 6,
-          borderWidth: 1.5,
-          borderColor: c,
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          bottom: 0,
-          right: 0,
-          width: 6,
-          height: 1.5,
-          backgroundColor: c,
-          borderRadius: 1,
-          transform: [{ rotate: "45deg" }],
-        }}
-      />
-    </View>
-  );
-}
 
 const ic = StyleSheet.create({
   backWrap: { width: 22, height: 22, alignItems: "center", justifyContent: "center" },
@@ -1207,7 +1176,7 @@ export default function OwnCarDetailsScreen() {
   const [customMake, setCustomMake] = useState("");
   const [customModel, setCustomModel] = useState("");
   const [modelModalVisible, setModelModalVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const customMakeRef = useRef<import("react-native").TextInput>(null);
 
   const [plate, setPlate] = useState("");
   const [selectedInsuranceId, setSelectedInsuranceId] = useState<string | null>(null);
@@ -1223,14 +1192,6 @@ export default function OwnCarDetailsScreen() {
   const H_PAD = 48;
   const GAP = 10;
   const cardWidth = Math.floor((width - H_PAD - GAP * (COLS - 1)) / COLS);
-
-  const filteredMakes = searchQuery.trim()
-    ? MAKES.filter(
-        (m) =>
-          m.display.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          m.fullName.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : MAKES;
 
   const selectedMake = MAKES.find((m) => m.id === selectedMakeId) ?? null;
   const modelsForMake =
@@ -1261,15 +1222,16 @@ export default function OwnCarDetailsScreen() {
     if (item.id === "other") {
       setSelectedMakeId("other");
       setSelectedModel(null);
-      setCustomModel("");
-    } else {
-      if (selectedMakeId !== item.id) {
-        setSelectedModel(null);
-        setCustomModel("");
-      }
-      setSelectedMakeId(item.id);
-      setModelModalVisible(true);
+      setTimeout(() => customMakeRef.current?.focus(), 100);
+      return;
     }
+    if (selectedMakeId !== item.id) {
+      setSelectedModel(null);
+      setCustomModel("");
+    }
+    setCustomMake("");
+    setSelectedMakeId(item.id);
+    setModelModalVisible(true);
   }
 
   function handleInsuranceSelect(item: InsuranceItem) {
@@ -1341,7 +1303,7 @@ export default function OwnCarDetailsScreen() {
             <Text style={s.sectionSubtitle}>Select your car make</Text>
 
             <View style={s.makeGrid}>
-              {filteredMakes.map((item) => (
+              {MAKES.map((item) => (
                 <MakeCard
                   key={item.id}
                   item={item}
@@ -1350,54 +1312,32 @@ export default function OwnCarDetailsScreen() {
                   onPress={() => handleMakePress(item)}
                 />
               ))}
-
-              {filteredMakes.length === 0 && (
-                <View style={s.emptySearch}>
-                  <Text style={s.emptySearchText}>No make found</Text>
-                </View>
-              )}
             </View>
 
-            <View style={s.orRow}>
-              <View style={s.orLine} />
-              <Text style={s.orText}>or</Text>
-              <View style={s.orLine} />
-            </View>
-
-            <View style={s.searchRow}>
-              <TextInput
-                style={s.searchInput}
-                placeholder="Search make"
-                placeholderTextColor="rgba(255,255,255,0.35)"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-              />
-              <View style={s.searchIconWrap}>
-                <SearchIcon />
+            <Text style={[s.label, s.labelGap]}>Not listed? Enter make &amp; model</Text>
+            <View style={[s.inputRow, customMake.trim() ? s.inputRowActive : null]}>
+              <View style={s.inputIcon}>
+                <CarDetailIcon color={customMake.trim() ? ORANGE : IC} />
               </View>
+              <TextInput
+                ref={customMakeRef}
+                style={s.inputText}
+                placeholder="e.g. Citroën Berlingo"
+                placeholderTextColor="rgba(255,255,255,0.28)"
+                value={customMake}
+                onChangeText={(t) => {
+                  setCustomMake(t);
+                  if (t.trim()) {
+                    setSelectedMakeId("other");
+                    setSelectedModel(null);
+                  } else {
+                    setSelectedMakeId(null);
+                  }
+                }}
+                autoCapitalize="words"
+                autoCorrect={false}
+              />
             </View>
-
-            {selectedMakeId === "other" && (
-              <>
-                <Text style={[s.label, s.labelGap]}>Enter make & model</Text>
-                <View style={s.inputRow}>
-                  <View style={s.inputIcon}>
-                    <CarDetailIcon color={ORANGE} />
-                  </View>
-                  <TextInput
-                    style={s.inputText}
-                    placeholder="e.g. Citroën Berlingo 2021"
-                    placeholderTextColor="rgba(255,255,255,0.28)"
-                    value={customMake}
-                    onChangeText={setCustomMake}
-                    autoCapitalize="words"
-                  />
-                </View>
-              </>
-            )}
 
             {selectedMakeId && selectedMakeId !== "other" && (
               <>

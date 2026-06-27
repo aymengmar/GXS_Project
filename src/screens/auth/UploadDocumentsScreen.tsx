@@ -17,7 +17,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DocumentUploadOptionsSheet from "@/components/DocumentUploadOptionsSheet";
 import PhotoPreviewModal from "@/components/PhotoPreviewModal";
-import { registerDriver } from "@/api/backendClient";
+import { registerDriver, uploadDocument } from "@/api/backendClient";
 import { registrationStore } from "@/store/registrationStore";
 
 const BG = "#080D1A";
@@ -371,6 +371,90 @@ function SendIcon() {
           borderLeftColor: "#fff",
         }}
       />
+    </View>
+  );
+}
+
+function PersonIcon({ color = "rgba(255,255,255,0.55)" }: { color?: string }) {
+  return (
+    <View style={{ width: 20, height: 22 }}>
+      {/* head */}
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 5,
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+          borderWidth: 1.5,
+          borderColor: color,
+        }}
+      />
+      {/* shoulders */}
+      <View
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 10,
+          borderTopLeftRadius: 8,
+          borderTopRightRadius: 8,
+          borderTopWidth: 1.5,
+          borderLeftWidth: 1.5,
+          borderRightWidth: 1.5,
+          borderColor: color,
+        }}
+      />
+    </View>
+  );
+}
+
+function PassportIcon({ color = "rgba(255,255,255,0.55)" }: { color?: string }) {
+  return (
+    <View style={{ width: 18, height: 22 }}>
+      {/* page */}
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          borderWidth: 1.5,
+          borderRadius: 3,
+          borderColor: color,
+        }}
+      />
+      {/* circle (biometric symbol) */}
+      <View
+        style={{
+          position: "absolute",
+          top: 4,
+          left: 4,
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+          borderWidth: 1.5,
+          borderColor: color,
+        }}
+      />
+      {/* lines at bottom */}
+      {[16, 19].map((top) => (
+        <View
+          key={top}
+          style={{
+            position: "absolute",
+            top,
+            left: 3,
+            right: 3,
+            height: 1.5,
+            backgroundColor: color,
+            borderRadius: 1,
+          }}
+        />
+      ))}
     </View>
   );
 }
@@ -800,6 +884,19 @@ const dr = StyleSheet.create({
   },
 });
 
+// ─── Upload helpers ───────────────────────────────────────────────────────────
+
+function uploadEntryToFile(entry: UploadEntry): { uri: string; name: string; mimeType: string } {
+  if (entry.type === "pdf") {
+    return { uri: entry.uri, name: entry.name, mimeType: "application/pdf" };
+  }
+  return {
+    uri: entry.uri,
+    name: entry.uri.split("/").pop() ?? "photo.jpg",
+    mimeType: "image/jpeg",
+  };
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -818,6 +915,17 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
+
+  const REQUIRED_DOCS = [
+    "Driver photo",
+    "Driver ID or Passport",
+    "Driving licence",
+    "Health insurance",
+    "IBAN / Bank account",
+    "Home registration",
+  ];
+  const allUploaded = REQUIRED_DOCS.every((doc) => !!uploads[doc]);
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
 
@@ -984,12 +1092,35 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
           {/* ── Document list ────────────────────────────────────── */}
           <View style={s.docList}>
             <DocumentRow
+              icon={<PersonIcon />}
+              title="Driver photo"
+              subtitle="Clear face photo — no PDF"
+              onUpload={() => openSheet("Driver photo")}
+              upload={uploads["Driver photo"]}
+            />
+            {uploadErrors["Driver photo"] ? (
+              <Text style={s.uploadErrText}>{uploadErrors["Driver photo"]}</Text>
+            ) : null}
+            <DocumentRow
+              icon={<PassportIcon />}
+              title="Driver ID or Passport"
+              subtitle="Upload a clear photo or PDF"
+              onUpload={() => openSheet("Driver ID or Passport")}
+              upload={uploads["Driver ID or Passport"]}
+            />
+            {uploadErrors["Driver ID or Passport"] ? (
+              <Text style={s.uploadErrText}>{uploadErrors["Driver ID or Passport"]}</Text>
+            ) : null}
+            <DocumentRow
               icon={<IDCardIcon />}
               title="Driving licence"
               subtitle="Upload a clear photo or scan"
               onUpload={() => openSheet("Driving licence")}
               upload={uploads["Driving licence"]}
             />
+            {uploadErrors["Driving licence"] ? (
+              <Text style={s.uploadErrText}>{uploadErrors["Driving licence"]}</Text>
+            ) : null}
             <DocumentRow
               icon={<HeartIcon />}
               title="Health insurance"
@@ -997,6 +1128,9 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
               onUpload={() => openSheet("Health insurance")}
               upload={uploads["Health insurance"]}
             />
+            {uploadErrors["Health insurance"] ? (
+              <Text style={s.uploadErrText}>{uploadErrors["Health insurance"]}</Text>
+            ) : null}
             <DocumentRow
               icon={<BankIcon />}
               title="IBAN / Bank account"
@@ -1004,6 +1138,9 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
               onUpload={() => openSheet("IBAN / Bank account")}
               upload={uploads["IBAN / Bank account"]}
             />
+            {uploadErrors["IBAN / Bank account"] ? (
+              <Text style={s.uploadErrText}>{uploadErrors["IBAN / Bank account"]}</Text>
+            ) : null}
             <DocumentRow
               icon={<HouseIcon />}
               title="Home registration"
@@ -1011,6 +1148,9 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
               onUpload={() => openSheet("Home registration")}
               upload={uploads["Home registration"]}
             />
+            {uploadErrors["Home registration"] ? (
+              <Text style={s.uploadErrText}>{uploadErrors["Home registration"]}</Text>
+            ) : null}
           </View>
 
           {/* ── Submit error ─────────────────────────────────────── */}
@@ -1022,17 +1162,50 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
 
           {/* ── Submit ───────────────────────────────────────────── */}
           <Pressable
-            style={[s.submitBtn, submitting && { opacity: 0.7 }]}
-            disabled={submitting}
+            style={[s.submitBtn, (!allUploaded || submitting) && { opacity: 0.4 }]}
+            disabled={!allUploaded || submitting}
             onPress={async () => {
               setSubmitError(null);
+              setUploadErrors({});
               const data = registrationStore.get();
               if (!data) {
                 setSubmitError("Registration data missing. Please go back to step 1.");
                 return;
               }
+
+              if (!data.access_token) {
+                setSubmitError("Please verify your email again before submitting.");
+                return;
+              }
+
               setSubmitting(true);
               try {
+                const docMap: Array<{ displayName: string; documentType: string }> = [
+                  { displayName: "Driver photo", documentType: "driver_photo" },
+                  { displayName: "Driver ID or Passport", documentType: "identity_document" },
+                  { displayName: "Driving licence", documentType: "driving_licence" },
+                  { displayName: "Health insurance", documentType: "health_insurance" },
+                  { displayName: "IBAN / Bank account", documentType: "iban_bank_account" },
+                  { displayName: "Home registration", documentType: "home_registration" },
+                ];
+
+                for (const { displayName, documentType } of docMap) {
+                  const entry = uploads[displayName];
+                  if (!entry) {
+                    setUploadErrors((prev) => ({ ...prev, [displayName]: "Please upload this document." }));
+                    return;
+                  }
+                  try {
+                    await uploadDocument(uploadEntryToFile(entry), documentType, data.access_token!);
+                  } catch (err: unknown) {
+                    setUploadErrors((prev) => ({
+                      ...prev,
+                      [displayName]: err instanceof Error ? err.message : "Upload failed. Please try again.",
+                    }));
+                    return;
+                  }
+                }
+
                 await registerDriver(data);
                 registrationStore.clear();
                 router.push("/register/submitted");
@@ -1080,6 +1253,7 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
         onTakePhoto={handleTakePhoto}
         onChooseFromGallery={handleChooseFromGallery}
         onUploadPdf={handleUploadPdf}
+        showPdf={sheetDoc !== "Driver photo"}
       />
 
       {previewPhoto && (
@@ -1145,6 +1319,13 @@ const s = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     marginBottom: 28,
+  },
+
+  uploadErrText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: "#FCA5A5",
+    paddingVertical: 6,
   },
 
   errorBox: {
