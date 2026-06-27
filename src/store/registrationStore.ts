@@ -13,6 +13,16 @@ export type DocumentFile = {
   size: number;
 };
 
+export type DocKey =
+  | "driver_photo"
+  | "identity_document"
+  | "driving_licence"
+  | "health_insurance"
+  | "iban_bank_account"
+  | "home_registration";
+
+export type AllDocuments = Record<DocKey, DocumentFile>;
+
 type RegistrationData = {
   email: string;
   postal_code: string;
@@ -25,6 +35,10 @@ type RegistrationData = {
   access_token?: string;
   driver_photo?: DocumentFile;
   identity_document?: DocumentFile;
+  driving_licence?: DocumentFile;
+  health_insurance?: DocumentFile;
+  iban_bank_account?: DocumentFile;
+  home_registration?: DocumentFile;
 };
 
 let _pending: RegistrationData | null = null;
@@ -46,9 +60,14 @@ export const registrationStore = {
       _pending = { ..._pending, email_verified: true, ...data };
     }
   },
-  setIdDocuments(docs: { driver_photo: DocumentFile; identity_document: DocumentFile }) {
+  setDocuments(docs: AllDocuments) {
     if (_pending) {
       _pending = { ..._pending, ...docs };
+    }
+  },
+  updateDocument(key: DocKey, file: DocumentFile) {
+    if (_pending) {
+      _pending = { ..._pending, [key]: file };
     }
   },
   clear() {

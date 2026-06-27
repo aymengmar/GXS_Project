@@ -1,5 +1,13 @@
+import logging
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from fastapi import HTTPException, status
 
+logger = logging.getLogger(__name__)
+
+from app.core.config import settings
 from app.db.supabase import supabase_admin, supabase_auth
 from app.schemas.auth import (
     DriverLoginRequest,
@@ -170,39 +178,119 @@ def login_driver(payload: DriverLoginRequest) -> DriverLoginResponse:
     )
 
 
+def _send_otp_email(to_email: str, otp: str) -> None:
+    """Send a 6-digit OTP via SMTP (bypasses Supabase's rate-limited email service)."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Your GXS Delivery verification code"
+    msg["From"] = settings.EMAIL_FROM
+    msg["To"] = to_email
+
+    plain = (
+        f"Your GXS Delivery verification code is: {otp}\n\n"
+        "This code expires in 60 minutes. Do not share it with anyone."
+    )
+    html = f"""
+    <div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:24px;">
+      <h2 style="color:#0D1B2E;margin-bottom:4px;">GXS Delivery</h2>
+      <p style="color:#555;margin-top:0;">Driver Registration — Email Verification</p>
+      <p style="color:#333;">Enter the code below in the app to verify your email address:</p>
+      <div style="background:#f4f4f4;border-radius:10px;padding:20px 0;text-align:center;
+                  letter-spacing:10px;font-size:32px;font-weight:700;color:#FF6500;
+                  margin:20px 0;">
+        {otp}
+      </div>
+      <p style="color:#888;font-size:13px;">
+        This code expires in 60 minutes. If you did not request this, ignore this email.
+      </p>
+    </div>
+    """
+
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+        server.ehlo()
+        server.starttls()
+        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD.replace(" ", ""))
+        server.send_message(msg)
+
+
 def send_email_verification_code(email: str) -> EmailVerificationSendResponse:
+    # Use the admin client to generate an OTP without triggering Supabase's
+    # rate-limited email service.  Try "signup" first; if the auth user already
+    # exists (e.g. from a previous partial registration) fall back to "magiclink".
+    otp: str | None = None
+
     try:
-        supabase_auth.auth.sign_in_with_otp(
-            {
-                "email": email,
-                "options": {"should_create_user": True},
-            }
+        link_response = supabase_admin.auth.admin.generate_link(
+            {"type": "signup", "email": email}
         )
+        otp = link_response.properties.email_otp
+    except Exception as signup_exc:
+        err = str(signup_exc).lower()
+        if "already been registered" in err or "already registered" in err or "user already registered" in err:
+            # Auth user exists — check whether they already have a full driver profile.
+            try:
+                existing = (
+                    supabase_admin.table("driver_profiles")
+                    .select("id")
+                    .eq("email", email)
+                    .execute()
+                )
+            except Exception:
+                existing = None
+
+            if existing and existing.data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="An account with this email already exists. Please log in instead.",
+                )
+
+            # No driver profile yet — resend using magiclink type so they can finish registration.
+            try:
+                link_response = supabase_admin.auth.admin.generate_link(
+                    {"type": "magiclink", "email": email}
+                )
+                otp = link_response.properties.email_otp
+            except Exception as ml_exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to prepare verification code: {ml_exc}",
+                ) from ml_exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to prepare verification code: {signup_exc}",
+            ) from signup_exc
+
+    try:
+        _send_otp_email(email, otp)
     except Exception as exc:
+        logger.error("SMTP send failed for %s: %s", email, exc)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to send verification code: {exc}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send verification email: {exc}",
         ) from exc
 
     return EmailVerificationSendResponse(message="Verification code sent.")
 
 
 def verify_email_otp(email: str, code: str) -> EmailVerificationVerifyResponse:
-    try:
-        response = supabase_auth.auth.verify_otp(
-            {
-                "email": email,
-                "token": code,
-                "type": "email",
-            }
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification code.",
-        ) from exc
+    # Try both OTP types: "signup" for new users, "magiclink" for users whose
+    # auth account already existed when the code was generated.
+    response = None
+    for otp_type in ("signup", "magiclink"):
+        try:
+            r = supabase_auth.auth.verify_otp(
+                {"email": email, "token": code, "type": otp_type}
+            )
+            if r.user is not None:
+                response = r
+                break
+        except Exception:
+            continue
 
-    if response.user is None:
+    if response is None or response.user is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification code.",

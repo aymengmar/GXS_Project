@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     SUPABASE_PUBLISHABLE_KEY: str
     SUPABASE_SECRET_KEY: str
 
+    # SMTP settings for sending verification emails ourselves.
+    # Use Gmail: enable 2FA then create an App Password at
+    # myaccount.google.com/apppasswords
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    EMAIL_FROM: str = "noreply@gxsdelivery.app"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
