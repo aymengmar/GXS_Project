@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.db.supabase import supabase_admin, supabase_auth
 from app.schemas.auth import (
+    AdminLoginResponse,
+    AdminUserInfo,
     DriverLoginRequest,
     DriverLoginResponse,
     DriverRegisterRequest,
@@ -110,28 +112,8 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
     )
 
 
-def login_driver(payload: DriverLoginRequest) -> DriverLoginResponse:
-    # Use the anon client so sign_in_with_password never pollutes the admin client session.
-    try:
-        auth_response = supabase_auth.auth.sign_in_with_password(
-            {"email": payload.email, "password": payload.password}
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-        ) from exc
-
-    if auth_response.user is None or auth_response.session is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-        )
-
-    auth_user_id = str(auth_response.user.id)
-    access_token = auth_response.session.access_token
-
-    # Load profile via admin client so RLS never blocks this lookup.
+def _complete_driver_login(auth_user_id: str, access_token: str) -> DriverLoginResponse:
+    """Load and validate the driver profile after successful Supabase Auth sign-in."""
     result = (
         supabase_admin.table("driver_profiles")
         .select("id, email, full_name, car_type, status, external_driver_id")
@@ -175,6 +157,100 @@ def login_driver(payload: DriverLoginRequest) -> DriverLoginResponse:
         car_type=profile["car_type"],
         status=driver_status,
         external_driver_id=profile.get("external_driver_id"),
+    )
+
+
+def login_driver(payload: DriverLoginRequest) -> DriverLoginResponse:
+    """Authenticate a driver by email/password and validate their driver profile."""
+    # Use the anon client so sign_in_with_password never pollutes the admin client session.
+    try:
+        auth_response = supabase_auth.auth.sign_in_with_password(
+            {"email": payload.email, "password": payload.password}
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        ) from exc
+
+    if auth_response.user is None or auth_response.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    return _complete_driver_login(
+        str(auth_response.user.id),
+        auth_response.session.access_token,
+    )
+
+
+def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse:
+    """Unified login: authenticate with Supabase, resolve role from app_users, then route."""
+    try:
+        auth_response = supabase_auth.auth.sign_in_with_password(
+            {"email": payload.email, "password": payload.password}
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        ) from exc
+
+    if auth_response.user is None or auth_response.session is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    auth_user_id = str(auth_response.user.id)
+    access_token = auth_response.session.access_token
+    refresh_token = auth_response.session.refresh_token
+
+    # Resolve role via the central app_users registry (service-role only — never exposed to mobile).
+    app_user_result = (
+        supabase_admin.table("app_users")
+        .select("auth_user_id, email, full_name, role, is_active")
+        .eq("auth_user_id", auth_user_id)
+        .execute()
+    )
+
+    if not app_user_result.data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "USER_PROFILE_NOT_FOUND", "message": "No user profile found for this account."},
+        )
+
+    app_user = app_user_result.data[0]
+
+    if not app_user["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "USER_INACTIVE", "message": "Account is inactive."},
+        )
+
+    role = app_user["role"]
+
+    if role == "admin":
+        return AdminLoginResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user=AdminUserInfo(
+                auth_user_id=auth_user_id,
+                email=app_user["email"],
+                full_name=app_user["full_name"],
+                role=role,
+                status="active",
+            ),
+            next_route="admin_dashboard",
+        )
+
+    if role == "driver":
+        return _complete_driver_login(auth_user_id, access_token)
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Login not yet supported for role: {role}.",
     )
 
 

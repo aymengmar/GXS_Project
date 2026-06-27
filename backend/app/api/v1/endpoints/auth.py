@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.schemas.auth import (
+    AdminLoginResponse,
     DriverLoginRequest,
     DriverLoginResponse,
     DriverRegisterRequest,
@@ -10,7 +11,7 @@ from app.schemas.auth import (
     EmailVerificationVerifyRequest,
     EmailVerificationVerifyResponse,
 )
-from app.services.auth_service import login_driver, register_driver, send_email_verification_code, verify_email_otp
+from app.services.auth_service import login_user, register_driver, send_email_verification_code, verify_email_otp
 
 router = APIRouter()
 
@@ -20,9 +21,9 @@ def register(payload: DriverRegisterRequest) -> DriverRegisterResponse:
     return register_driver(payload)
 
 
-@router.post("/login", response_model=DriverLoginResponse)
-def login(payload: DriverLoginRequest) -> DriverLoginResponse:
-    return login_driver(payload)
+@router.post("/login")
+def login(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse:
+    return login_user(payload)
 
 
 @router.post("/email-verification/send-code", response_model=EmailVerificationSendResponse)

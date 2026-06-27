@@ -96,3 +96,18 @@ class EmailVerificationVerifyResponse(BaseModel):
     message: str
     auth_user_id: str | None = None
     access_token: str | None = None
+
+
+class AdminUserInfo(BaseModel):
+    auth_user_id: str
+    email: str
+    full_name: str
+    role: str
+    status: str
+
+
+class AdminLoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    user: AdminUserInfo
+    next_route: str

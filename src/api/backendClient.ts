@@ -1,6 +1,5 @@
-// USB (adb reverse tcp:8000 tcp:8000): use 127.0.0.1  |  WiFi: use LAN IP
-export const BACKEND_BASE_URL = "http://127.0.0.1:8000";
-//export const BACKEND_BASE_URL = "http://192.168.2.129:8000"; // WiFi
+export const BACKEND_BASE_URL =
+  process.env.EXPO_PUBLIC_BACKEND_BASE_URL ?? "http://127.0.0.1:8000";
 
 type OwnCarDetails = {
   vehicle_make_model: string;
@@ -158,4 +157,64 @@ export async function uploadDocument(
     xhr.ontimeout = () => reject(new Error("Upload timed out. Please try again."));
     xhr.send(formData);
   });
+}
+
+// ── Login ────────────────────────────────────────────────────────────────────
+
+type AdminUserInfo = {
+  auth_user_id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  status: string;
+};
+
+export type AdminLoginResponse = {
+  access_token: string;
+  refresh_token: string;
+  user: AdminUserInfo;
+  next_route: "admin_dashboard";
+};
+
+export type DriverLoginResponse = {
+  access_token: string;
+  id: string;
+  email: string;
+  full_name: string;
+  car_type: string;
+  status: string;
+  external_driver_id: string | null;
+};
+
+export type LoginResponse = AdminLoginResponse | DriverLoginResponse;
+
+export function isAdminLoginResponse(r: LoginResponse): r is AdminLoginResponse {
+  return (r as AdminLoginResponse).next_route === "admin_dashboard";
+}
+
+export async function loginUser(
+  email: string,
+  password: string,
+): Promise<LoginResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    const detail = (data as { detail?: unknown })?.detail;
+    if (typeof detail === "object" && detail !== null && "message" in detail) {
+      throw new Error((detail as { message: string }).message);
+    }
+    if (Array.isArray(detail)) {
+      throw new Error(detail.map((e: { msg: string }) => e.msg).join(", "));
+    }
+    if (typeof detail === "string") throw new Error(detail);
+    throw new Error("Login failed. Please try again.");
+  }
+
+  return data as LoginResponse;
 }

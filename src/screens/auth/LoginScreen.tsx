@@ -1,4 +1,6 @@
+import { isAdminLoginResponse, loginUser } from "@/api/backendClient";
 import { images } from "@/constants/images";
+import { sessionStore } from "@/store/sessionStore";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
@@ -156,6 +158,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loginPressed, setLoginPressed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showRegisteredBanner, setShowRegisteredBanner] = useState(
     params.registered === "1",
   );
@@ -167,8 +171,27 @@ export default function LoginScreen() {
   }, [showRegisteredBanner]);
 
   const handleLogin = async () => {
-    // TODO: Implement Supabase Auth sign-in logic
-    console.log("Login attempt:", { email });
+    if (!email.trim() || !password) {
+      setErrorMsg("Please enter your email and password.");
+      return;
+    }
+    setErrorMsg(null);
+    setLoading(true);
+    try {
+      const response = await loginUser(email.trim(), password);
+      if (isAdminLoginResponse(response)) {
+        sessionStore.setAdmin(response);
+        router.replace("/admin" as any);
+      } else {
+        sessionStore.setDriver(response);
+        // Driver routing placeholder — driver dashboard not yet implemented
+        console.log("Driver login success:", response.email);
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Login failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -235,6 +258,13 @@ export default function LoginScreen() {
                 </View>
               )}
 
+              {/* ── Error banner ───────────────────────────────────── */}
+              {errorMsg && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorBannerText}>{errorMsg}</Text>
+                </View>
+              )}
+
               {/* ── Form ───────────────────────────────────────────── */}
               <View style={styles.form}>
                 {/* Email */}
@@ -288,13 +318,16 @@ export default function LoginScreen() {
                 <Pressable
                   style={[
                     styles.loginBtn,
-                    loginPressed && styles.loginBtnPressed,
+                    (loginPressed || loading) && styles.loginBtnPressed,
                   ]}
                   onPressIn={() => setLoginPressed(true)}
                   onPressOut={() => setLoginPressed(false)}
                   onPress={handleLogin}
+                  disabled={loading}
                 >
-                  <Text style={styles.loginBtnText}>Login</Text>
+                  <Text style={styles.loginBtnText}>
+                    {loading ? "Logging in…" : "Login"}
+                  </Text>
                 </Pressable>
 
                 {/* Register link */}
@@ -431,6 +464,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingTop: 36,
     paddingBottom: 12,
+  },
+
+  errorBanner: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.40)",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  errorBannerText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: "#FCA5A5",
+    lineHeight: 18,
   },
 
   registeredBanner: {
