@@ -1,4 +1,5 @@
 import logging
+import secrets
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -292,52 +293,62 @@ def _send_otp_email(to_email: str, otp: str) -> None:
 
 
 def send_email_verification_code(email: str) -> EmailVerificationSendResponse:
-    # Use the admin client to generate an OTP without triggering Supabase's
-    # rate-limited email service.  Try "signup" first; if the auth user already
-    # exists (e.g. from a previous partial registration) fall back to "magiclink".
-    otp: str | None = None
+    email = email.strip().lower()
 
+    # Reject if a completed driver profile already exists for this email.
     try:
-        link_response = supabase_admin.auth.admin.generate_link(
-            {"type": "signup", "email": email}
+        existing = (
+            supabase_admin.table("driver_profiles")
+            .select("id")
+            .eq("email", email)
+            .execute()
         )
-        otp = link_response.properties.email_otp
-    except Exception as signup_exc:
-        err = str(signup_exc).lower()
-        if "already been registered" in err or "already registered" in err or "user already registered" in err:
-            # Auth user exists — check whether they already have a full driver profile.
-            try:
-                existing = (
-                    supabase_admin.table("driver_profiles")
-                    .select("id")
-                    .eq("email", email)
-                    .execute()
-                )
-            except Exception:
-                existing = None
-
-            if existing and existing.data:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="An account with this email already exists. Please log in instead.",
-                )
-
-            # No driver profile yet — resend using magiclink type so they can finish registration.
-            try:
-                link_response = supabase_admin.auth.admin.generate_link(
-                    {"type": "magiclink", "email": email}
-                )
-                otp = link_response.properties.email_otp
-            except Exception as ml_exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Failed to prepare verification code: {ml_exc}",
-                ) from ml_exc
-        else:
+        if existing.data:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Failed to prepare verification code: {signup_exc}",
-            ) from signup_exc
+                detail="An account with this email already exists. Please log in instead.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Non-fatal; proceed to user creation
+
+    # Ensure a Supabase Auth user exists for this email.
+    # If not, create one with a secure internal password — never returned or logged.
+    try:
+        supabase_admin.auth.admin.create_user(
+            {
+                "email": email,
+                "password": secrets.token_urlsafe(32),
+                "email_confirm": True,
+            }
+        )
+    except Exception as create_exc:
+        err_lower = str(create_exc).lower()
+        user_exists = any(
+            kw in err_lower
+            for kw in ("already been registered", "already registered", "user already registered", "already exists")
+        )
+        if not user_exists:
+            logger.error("Auth user creation failed for send-code: %s", create_exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not prepare verification. Please try again later.",
+            ) from create_exc
+        # Auth user already exists — reuse it, continue
+
+    # Generate OTP via magiclink. Auth user is guaranteed to exist at this point.
+    try:
+        link_response = supabase_admin.auth.admin.generate_link(
+            {"type": "magiclink", "email": email}
+        )
+        otp: str = link_response.properties.email_otp
+    except Exception as exc:
+        logger.error("OTP generation failed for %s: %s", email, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not prepare verification code. Please try again later.",
+        ) from exc
 
     try:
         _send_otp_email(email, otp)
@@ -345,7 +356,7 @@ def send_email_verification_code(email: str) -> EmailVerificationSendResponse:
         logger.error("SMTP send failed for %s: %s", email, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send verification email: {exc}",
+            detail="Failed to send verification email. Please try again later.",
         ) from exc
 
     return EmailVerificationSendResponse(message="Verification code sent.")

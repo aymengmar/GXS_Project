@@ -190,30 +190,12 @@ const tb = StyleSheet.create({
   label:     { fontFamily:"Poppins_500Medium", fontSize:10, lineHeight:14 },
 });
 
-// ─── stat cards ───────────────────────────────────────────────────────────────
-function StatCard({ count, label, color }: { count:number; label:string; color:string }) {
-  return (
-    <View style={[sc.card, { borderColor: color + "30" }]}>
-      <View style={[sc.dot, { backgroundColor:color }]} />
-      <Text style={[sc.count, { color }]}>{count}</Text>
-      <Text style={sc.label}>{label}</Text>
-    </View>
-  );
-}
-
-const sc = StyleSheet.create({
-  card:  { flex:1, backgroundColor:CARD, borderRadius:14, borderWidth:1, padding:14, alignItems:"center", gap:5 },
-  dot:   { width:8, height:8, borderRadius:4 },
-  count: { fontFamily:"Poppins_700Bold", fontSize:22, lineHeight:28 },
-  label: { fontFamily:"Poppins_500Medium", fontSize:11, color:DIM },
-});
-
 // ─── driver row ───────────────────────────────────────────────────────────────
-function DriverRow({ driver }: { driver:Driver }) {
+function DriverRow({ driver, onPress }: { driver:Driver; onPress:()=>void }) {
   const cfg = statusCfg(driver.status);
 
   return (
-    <Pressable style={dr.card}>
+    <Pressable style={dr.card} onPress={onPress}>
       {/* avatar photo + status diode */}
       <View style={dr.avatarWrap}>
         <Image source={driver.photo} style={dr.photo} />
@@ -344,11 +326,7 @@ export default function AdminDriversScreen() {
       </View>
 
       {/* stat cards */}
-      <View style={s.statsRow}>
-        <StatCard count={288} label="Active"  color={GREEN} />
-        <StatCard count={24}  label="Pending" color={AMBER} />
-        <StatCard count={6}   label="Blocked" color={RED}   />
-      </View>
+
 
       {/* filter pills — plain View row so all 4 are visible without scrolling */}
       <View style={s.pillRow}>
@@ -378,7 +356,13 @@ export default function AdminDriversScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {filtered.map(d => <DriverRow key={d.id} driver={d} />)}
+        {filtered.map(d => (
+          <DriverRow
+            key={d.id}
+            driver={d}
+            onPress={() => router.push(`/admin/driver-details?id=${d.id}` as never)}
+          />
+        ))}
         {filtered.length === 0 && (
           <View style={s.empty}>
             <Text style={s.emptyText}>No drivers found</Text>

@@ -95,9 +95,7 @@ export async function sendEmailVerificationCode(
   );
   const data = await res.json();
   if (!res.ok)
-    throw new Error(
-      extractErrorMessage(data, "Failed to send verification code."),
-    );
+    throw new Error("Could not send verification email. Please try again later.");
   return data as SendCodeResponse;
 }
 
