@@ -40,7 +40,7 @@ export default function AdminLogoutModal({ visible, onClose }: Props) {
       statusBarTranslucent
     >
       <View style={s.overlay}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
 
         <View style={s.dialog}>
           <View style={s.iconCircle}>

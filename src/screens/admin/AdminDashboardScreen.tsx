@@ -1,9 +1,13 @@
+import AdminCustomDateModal, { DateVal, fmtDate } from "@/components/admin/AdminCustomDateModal";
+import AdminPeriodSelector, { Period } from "@/components/admin/AdminPeriodSelector";
 import AdminProfileDrawer from "@/components/admin/AdminProfileDrawer";
+import { fetchAdminDashboardSummary, AdminDashboardSummary } from "@/api/backendClient";
 import { sessionStore } from "@/store/sessionStore";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Dimensions,
   Pressable,
   ScrollView,
@@ -24,7 +28,6 @@ const RED = "#EF4444";
 const BLUE = "#3B82F6";
 const PURPLE = "#8B5CF6";
 const AMBER = "#F59E0B";
-const GRAY = "#6B7280";
 const WHITE = "#FFFFFF";
 const DIM = "rgba(255,255,255,0.55)";
 const MUTED = "rgba(255,255,255,0.30)";
@@ -97,7 +100,11 @@ function WarningIcon({ size = 18, color = WHITE }: { size?: number; color?: stri
 }
 
 function DeltaArrow({ up, color }: { up: boolean; color: string }) {
-  return <Text style={{ color, fontSize: 13, lineHeight: 16, marginRight: 2 }}>{up ? "↑" : "↓"}</Text>;
+  return (
+    <Text style={{ color, fontSize: 17, lineHeight: 20, marginRight: 3, fontFamily: "Poppins_700Bold" }}>
+      {up ? "↑" : "↓"}
+    </Text>
+  );
 }
 
 // ─── mini sparkline ───────────────────────────────────────────────────────────
@@ -148,17 +155,40 @@ function donutArc(cx: number, cy: number, outerR: number, innerR: number, startD
   return `M ${x1} ${y1} A ${outerR} ${outerR} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${innerR} ${innerR} 0 ${large} 0 ${x4} ${y4} Z`;
 }
 
-const DONUT_SEGMENTS = [
-  { color: GREEN,  label: "Active",   count: 228, pct: "66.7%", start: 2,   end: 238 },
-  { color: AMBER,  label: "Pending",  count: 58,  pct: "17.0%", start: 241, end: 300 },
-  { color: RED,    label: "Flagged",  count: 32,  pct: "9.4%",  start: 303, end: 333 },
-  { color: GRAY,   label: "Inactive", count: 24,  pct: "7.0%",  start: 336, end: 359 },
-];
+const FALLBACK_DRIVER_STATUS = { active: 228, pending: 58, blocked: 32 };
 
-function DriverStatusCard() {
+type DonutSeg = { color: string; label: string; count: number; pct: string; start: number; end: number };
+
+function computeDonutSegments(status: { active: number; pending: number; blocked: number }): DonutSeg[] {
+  const total = status.active + status.pending + status.blocked;
+  const raw = [
+    { color: GREEN, label: "Active",         count: status.active  },
+    { color: AMBER, label: "Pending",        count: status.pending },
+    { color: RED,   label: "Blocked Driver", count: status.blocked },
+  ];
+  if (total === 0) return raw.map(s => ({ ...s, pct: "0%", start: 0, end: 0 }));
+  const GAP = 3;
+  const nonZero = raw.filter(s => s.count > 0).length;
+  const totalSweep = 360 - GAP * nonZero;
+  let current = 2;
+  return raw.map(seg => {
+    if (seg.count === 0) return { ...seg, pct: "0%", start: current, end: current };
+    const pct = seg.count / total;
+    const sweep = pct * totalSweep;
+    const start = current;
+    const end = start + sweep;
+    current = end + GAP;
+    return { ...seg, pct: `${(pct * 100).toFixed(1)}%`, start, end };
+  });
+}
+
+function DriverStatusCard({ summary }: { summary: AdminDashboardSummary | null }) {
+  const driverStatus = summary?.driver_status ?? FALLBACK_DRIVER_STATUS;
+  const segments = computeDonutSegments(driverStatus);
+  const totalInChart = driverStatus.active + driverStatus.pending + driverStatus.blocked;
   const DSIZE = 140;
   const CX = 70, CY = 70, OR = 60, IR = 41;
-  const LegendItem = ({ seg }: { seg: (typeof DONUT_SEGMENTS)[0] }) => (
+  const LegendItem = ({ seg }: { seg: DonutSeg }) => (
     <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 7 }}>
       <View style={[ds.dot, { backgroundColor: seg.color }]} />
       <View style={{ alignItems: "center" }}>
@@ -181,24 +211,23 @@ function DriverStatusCard() {
       {/* donut centered on top */}
       <View style={ds.donutWrap}>
         <Svg width={DSIZE} height={DSIZE} viewBox={`0 0 ${DSIZE} ${DSIZE}`}>
-          {DONUT_SEGMENTS.map((seg) => (
+          {segments.map((seg) => (
             <Path key={seg.label} d={donutArc(CX, CY, OR, IR, seg.start, seg.end)} fill={seg.color} />
           ))}
         </Svg>
         <View style={ds.donutCenter} pointerEvents="none">
           <Text style={ds.donutSub}>Total Drivers</Text>
-          <Text style={ds.donutNum}>342</Text>
+          <Text style={ds.donutNum}>{totalInChart}</Text>
         </View>
       </View>
-      {/* 2×2 legend grid below donut */}
+      {/* legend grid below donut */}
       <View style={ds.legend}>
         <View style={ds.legendRow}>
-          <LegendItem seg={DONUT_SEGMENTS[0]} />
-          <LegendItem seg={DONUT_SEGMENTS[1]} />
+          <LegendItem seg={segments[0]} />
+          <LegendItem seg={segments[1]} />
         </View>
         <View style={ds.legendRow}>
-          <LegendItem seg={DONUT_SEGMENTS[2]} />
-          <LegendItem seg={DONUT_SEGMENTS[3]} />
+          <LegendItem seg={segments[2]} />
         </View>
       </View>
     </View>
@@ -291,12 +320,14 @@ type CardDef = {
   spark: number[];
 };
 
-const CARDS: CardDef[] = [
-  { label: "Total Drivers",         value: "342",   iconType: "users",        iconColor: GREEN,  iconBg: "rgba(34,197,94,0.15)",   delta: "↑ 8.1%",  deltaUp: true,  spark: [10,14,12,18,22,26,28,33,38,42] },
-  { label: "Pending Verifications", value: "24",    iconType: "shield",       iconColor: AMBER,  iconBg: "rgba(245,158,11,0.15)",  delta: "↓ 4.3%",  deltaUp: false, spark: [40,36,38,30,28,32,26,24,28,24] },
-  { label: "Total Deliveries",      value: "1,248", iconType: "box",          iconColor: BLUE,   iconBg: "rgba(59,130,246,0.15)",  delta: "↑ 12.5%", deltaUp: true,  spark: [200,300,380,450,550,640,720,850,980,1100] },
-  { label: "Completed Today",       value: "892",   iconType: "check-circle", iconColor: PURPLE, iconBg: "rgba(139,92,246,0.15)", delta: "↑ 15.3%", deltaUp: true,  spark: [100,180,260,350,440,550,640,730,810,892] },
-];
+function buildCards(summary: AdminDashboardSummary | null): CardDef[] {
+  return [
+    { label: "Total Drivers",         value: summary ? String(summary.total_drivers)         : "—", iconType: "users",        iconColor: GREEN,  iconBg: "rgba(34,197,94,0.15)",   delta: "↑ 8.1%",  deltaUp: true,  spark: [10,14,12,18,22,26,28,33,38,42] },
+    { label: "Pending Verifications", value: summary ? String(summary.pending_verifications) : "—", iconType: "shield",       iconColor: AMBER,  iconBg: "rgba(245,158,11,0.15)",  delta: "↓ 4.3%",  deltaUp: false, spark: [40,36,38,30,28,32,26,24,28,24] },
+    { label: "Total Deliveries",      value: "1,248",                                               iconType: "box",          iconColor: BLUE,   iconBg: "rgba(59,130,246,0.15)",  delta: "↑ 12.5%", deltaUp: true,  spark: [200,300,380,450,550,640,720,850,980,1100] },
+    { label: "Active Drivers",        value: summary ? String(summary.active_drivers)        : "—", iconType: "check-circle", iconColor: PURPLE, iconBg: "rgba(139,92,246,0.15)",  delta: "↑ 15.3%", deltaUp: true,  spark: [100,130,155,175,188,198,210,218,224,228] },
+  ];
+}
 
 function CardIcon({ type, color }: { type: CardDef["iconType"]; color: string }) {
   if (type === "users") return <UsersIcon size={20} color={color} />;
@@ -305,7 +336,7 @@ function CardIcon({ type, color }: { type: CardDef["iconType"]; color: string })
   return <CircleCheckIcon size={20} color={color} />;
 }
 
-function SummaryCard(c: CardDef) {
+function SummaryCard(c: CardDef & { compLabel: string }) {
   const deltaColor = c.deltaUp ? GREEN : RED;
   return (
     <View style={sc.card}>
@@ -318,12 +349,12 @@ function SummaryCard(c: CardDef) {
       <Text style={sc.label} numberOfLines={2}>{c.label}</Text>
       <Text style={sc.value}>{c.value}</Text>
       <View style={sc.bottomRow}>
-        <View>
+        <View style={sc.deltaBlock}>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <DeltaArrow up={c.deltaUp} color={deltaColor} />
             <Text style={[sc.deltaVal, { color: deltaColor }]}>{c.delta.replace(/^[↑↓] /, "")}</Text>
           </View>
-          <Text style={sc.deltaSub}>vs yesterday</Text>
+          <Text style={sc.deltaSub} numberOfLines={1} adjustsFontSizeToFit>{c.compLabel}</Text>
         </View>
         <MiniSparkline data={c.spark} color={c.iconColor} />
       </View>
@@ -338,6 +369,7 @@ const sc = StyleSheet.create({
   label: { fontFamily: "Poppins_400Regular", fontSize: 11, color: DIM, lineHeight: 15 },
   value: { fontFamily: "Poppins_700Bold", fontSize: 24, color: WHITE, lineHeight: 30 },
   bottomRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 4 },
+  deltaBlock: { flex: 1, minWidth: 0, marginRight: 4 },
   deltaVal: { fontFamily: "Poppins_600SemiBold", fontSize: 12, lineHeight: 16 },
   deltaSub: { fontFamily: "Poppins_400Regular", fontSize: 10, color: MUTED, lineHeight: 14 },
 });
@@ -441,13 +473,71 @@ function greeting() {
 
 // ─── screen ───────────────────────────────────────────────────────────────────
 
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtShort(d: DateVal) {
+  return `${MONTHS_SHORT[d.month]} ${d.day}`;
+}
+
 export default function AdminDashboardScreen() {
   const router = useRouter();
   const session = sessionStore.get();
   const firstName = session?.kind === "admin" ? session.user.full_name.split(" ")[0] : "Admin";
   useMemo(() => greeting(), []);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen,   setDrawerOpen]   = useState(false);
+  const [period,       setPeriod]       = useState<Period>("today");
+  const [showModal,    setShowModal]    = useState(false);
+  const [customStart,  setCustomStart]  = useState<DateVal | null>(null);
+  const [customEnd,    setCustomEnd]    = useState<DateVal | null>(null);
+
+  const [summary,  setSummary]  = useState<AdminDashboardSummary | null>(null);
+  const [loading,  setLoading]  = useState(true);
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const s = sessionStore.get();
+    if (s?.kind !== "admin") { setLoading(false); return; }
+    fetchAdminDashboardSummary(s.access_token)
+      .then(data => { setSummary(data); setLoading(false); })
+      .catch(err  => { setFetchErr(String(err?.message ?? "Failed to load dashboard data.")); setLoading(false); });
+  }, []);
+
+  const cards = useMemo(() => buildCards(summary), [summary]);
+
+  const compLabel = useMemo(() => {
+    if (period === "today")  return "vs yesterday";
+    if (period === "week")   return "vs previous week";
+    if (period === "month")  return "vs previous month";
+    if (period === "custom" && customStart && customEnd) {
+      const start = new Date(customStart.year, customStart.month, customStart.day);
+      const end   = new Date(customEnd.year,   customEnd.month,   customEnd.day);
+      const days  = Math.round((end.getTime() - start.getTime()) / 86_400_000);
+      return days === 0 ? "vs previous day" : "vs previous period";
+    }
+    return "vs previous period";
+  }, [period, customStart, customEnd]);
+
+  const customDateRange = useMemo(() => {
+    if (!customStart || !customEnd) return null;
+    const sameYear = customStart.year === customEnd.year;
+    if (sameYear) return `${fmtShort(customStart)} – ${fmtShort(customEnd)}, ${customStart.year}`;
+    return `${fmtDate(customStart)} – ${fmtDate(customEnd)}`;
+  }, [customStart, customEnd]);
+
+  function handlePeriodSelect(p: Period) {
+    if (p === "custom") {
+      setShowModal(true);
+    } else {
+      setPeriod(p);
+    }
+  }
+
+  function handleValidate(start: DateVal, end: DateVal) {
+    setCustomStart(start);
+    setCustomEnd(end);
+    setPeriod("custom");
+    setShowModal(false);
+  }
 
   const handleTabPress = (i: number) => {
     if (i === 1) router.replace("/admin/drivers"  as any);
@@ -464,10 +554,7 @@ export default function AdminDashboardScreen() {
         {/* ── header ─────────────────────────────────────────────── */}
         <View style={s.header}>
           <View>
-            <View style={{ flexDirection: "row", alignItems: "baseline" }}>
-              <Text style={s.headerGXS}>GXS</Text>
-              <Text style={s.headerDelivery}> Delivery</Text>
-            </View>
+            
             <Text style={s.headerSub}>Admin Dashboard</Text>
           </View>
           <View style={s.headerRight}>
@@ -481,17 +568,37 @@ export default function AdminDashboardScreen() {
           </View>
         </View>
 
-  
+        {/* ── period selector ────────────────────────────────────── */}
+        <AdminPeriodSelector
+          active={period}
+          onSelect={handlePeriodSelect}
+          customDateRange={customDateRange}
+        />
+
+        {/* ── error banner ───────────────────────────────────────── */}
+        {fetchErr && (
+          <View style={s.errorBanner}>
+            <Text style={s.errorText}>{fetchErr}</Text>
+          </View>
+        )}
 
         {/* ── metric cards (2×2 grid) ────────────────────────────── */}
-        <View style={s.cardsGrid}>
-          {CARDS.map((c) => (
-            <SummaryCard key={c.label} {...c} />
-          ))}
-        </View>
+        {loading ? (
+          <View style={s.loadingBox}>
+            <ActivityIndicator size="large" color={ORANGE} />
+          </View>
+        ) : (
+          <>
+            <View style={s.cardsGrid}>
+              {cards.map((c) => (
+                <SummaryCard key={c.label} {...c} compLabel={compLabel} />
+              ))}
+            </View>
 
-        {/* ── driver status donut card ────────────────────────────── */}
-        <DriverStatusCard />
+            {/* ── driver status donut card ──────────────────────────── */}
+            <DriverStatusCard summary={summary} />
+          </>
+        )}
 
         {/* ── needs attention card ────────────────────────────────── */}
         <NeedsAttentionCard />
@@ -505,6 +612,14 @@ export default function AdminDashboardScreen() {
       </SafeAreaView>
 
       <AdminProfileDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+
+      <AdminCustomDateModal
+        visible={showModal}
+        initialStart={customStart}
+        initialEnd={customEnd}
+        onCancel={() => setShowModal(false)}
+        onValidate={handleValidate}
+      />
     </SafeAreaView>
   );
 }
@@ -544,4 +659,9 @@ const s = StyleSheet.create({
 
   // cards grid
   cardsGrid: { paddingHorizontal: 20, flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 20 },
+
+  // loading / error
+  loadingBox:  { height: 220, alignItems: "center", justifyContent: "center" },
+  errorBanner: { marginHorizontal: 20, marginBottom: 12, backgroundColor: "rgba(239,68,68,0.15)", borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,68,68,0.3)", paddingHorizontal: 14, paddingVertical: 10 },
+  errorText:   { fontFamily: "Poppins_400Regular", fontSize: 12, color: RED, lineHeight: 18 },
 });

@@ -216,3 +216,29 @@ export async function loginUser(
 
   return data as LoginResponse;
 }
+
+// ── Admin Dashboard ──────────────────────────────────────────────────────────
+
+export type AdminDashboardSummary = {
+  total_drivers: number;
+  pending_verifications: number;
+  active_drivers: number;
+  driver_status: {
+    active: number;
+    pending: number;
+    blocked: number;
+  };
+};
+
+export async function fetchAdminDashboardSummary(
+  accessToken: string,
+): Promise<AdminDashboardSummary> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/admin/dashboard/summary`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to load dashboard summary."));
+  }
+  return data as AdminDashboardSummary;
+}

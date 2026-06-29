@@ -75,7 +75,7 @@ export default function AdminLanguageModal({ visible, onClose }: Props) {
       statusBarTranslucent
     >
       <View style={s.overlay}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
 
         <View style={s.sheet}>
           <View style={s.handle} />

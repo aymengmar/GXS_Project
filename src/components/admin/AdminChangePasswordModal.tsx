@@ -122,7 +122,7 @@ export default function AdminChangePasswordModal({ visible, onClose }: Props) {
         style={s.overlay}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={handleClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
 
         <View style={s.sheet}>
           <View style={s.handle} />

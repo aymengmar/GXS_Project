@@ -573,7 +573,7 @@ function ReviewModal({ inv, onClose, onAction }: {
   return (
     <Modal visible={inv !== null} transparent animationType="slide" onRequestClose={onClose}>
       <View style={rm.overlay}>
-        <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={rm.sheet}>
 
           {/* drag handle */}
@@ -784,7 +784,7 @@ const rm = StyleSheet.create({
 });
 
 const cf = StyleSheet.create({
-  overlay:    { ...StyleSheet.absoluteFillObject, backgroundColor:"rgba(0,0,0,0.65)", alignItems:"center", justifyContent:"center", zIndex:20, padding:24 },
+  overlay:    { ...StyleSheet.absoluteFill, backgroundColor:"rgba(0,0,0,0.65)", alignItems:"center", justifyContent:"center", zIndex:20, padding:24 },
   card:       { width:"100%", backgroundColor:"#0D1A2E", borderRadius:20, borderWidth:1, borderColor:BORDER, padding:24, alignItems:"center", gap:12 },
   iconRing:   { width:64, height:64, borderRadius:32, borderWidth:2, alignItems:"center", justifyContent:"center", marginBottom:4 },
   title:      { fontFamily:"Poppins_700Bold",    fontSize:18, textAlign:"center" },
