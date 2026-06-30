@@ -1,7 +1,10 @@
+import { fetchAdminDrivers, getDriverPhotoProxyUrl } from "@/api/backendClient";
+import { sessionStore } from "@/store/sessionStore";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
@@ -32,19 +35,6 @@ type UserStatus  = "Active" | "Pending" | "Blocked";
 type UserType    = "Drivers" | "Warehouse";
 type FilterKey   = "All" | UserStatus;
 
-// ─── local avatar photos ──────────────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const AVATARS = {
-  d1: require("@/assets/images/avatars/driver1.jpg"),
-  d2: require("@/assets/images/avatars/driver2.jpg"),
-  d3: require("@/assets/images/avatars/driver3.jpg"),
-  d4: require("@/assets/images/avatars/driver4.jpg"),
-  d5: require("@/assets/images/avatars/driver5.jpg"),
-  d6: require("@/assets/images/avatars/driver6.jpg"),
-  d7: require("@/assets/images/avatars/driver7.jpg"),
-  d8: require("@/assets/images/avatars/driver8.jpg"),
-};
-
 type Driver = {
   kind: "driver";
   id: string;
@@ -52,8 +42,8 @@ type Driver = {
   extId: string;
   carType: string;
   status: UserStatus;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  photo: any;
+  photoUri: string | null;
+  avatarColor: string;
 };
 
 type WarehouseUser = {
@@ -68,18 +58,34 @@ type WarehouseUser = {
 
 type AnyUser = Driver | WarehouseUser;
 
-// ─── mock data ────────────────────────────────────────────────────────────────
-const DRIVERS: Driver[] = [
-  { kind:"driver", id:"1", name:"John Doe",       extId:"DRV-001", carType:"Company Car Driver", status:"Active",  photo:AVATARS.d1 },
-  { kind:"driver", id:"2", name:"Michael Smith",  extId:"DRV-002", carType:"Own Car Driver",     status:"Pending", photo:AVATARS.d2 },
-  { kind:"driver", id:"3", name:"Sarah Johnson",  extId:"DRV-003", carType:"Company Car Driver", status:"Active",  photo:AVATARS.d3 },
-  { kind:"driver", id:"4", name:"David Brown",    extId:"DRV-004", carType:"Own Car Driver",     status:"Blocked", photo:AVATARS.d4 },
-  { kind:"driver", id:"5", name:"Lisa Wilson",    extId:"DRV-005", carType:"Company Car Driver", status:"Active",  photo:AVATARS.d5 },
-  { kind:"driver", id:"6", name:"Robert Taylor",  extId:"DRV-006", carType:"Own Car Driver",     status:"Pending", photo:AVATARS.d6 },
-  { kind:"driver", id:"7", name:"James Anderson", extId:"DRV-007", carType:"Company Car Driver", status:"Active",  photo:AVATARS.d7 },
-  { kind:"driver", id:"8", name:"Emma Davis",     extId:"DRV-008", carType:"Company Car Driver", status:"Active",  photo:AVATARS.d8 },
+// ─── avatar color helper ──────────────────────────────────────────────────────
+const AVATAR_PALETTE = ["#7C3AED","#2563EB","#059669","#D97706","#DC2626","#0891B2","#FF6500","#0D9488"];
+
+function avatarColorFromId(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+}
+
+// ─── local fallback avatars ───────────────────────────────────────────────────
+const fallbackAvatars = [
+  require("../../../assets/images/avatars/driver1.jpg"),
+  require("../../../assets/images/avatars/driver2.jpg"),
+  require("../../../assets/images/avatars/driver3.jpg"),
+  require("../../../assets/images/avatars/driver4.jpg"),
+  require("../../../assets/images/avatars/driver5.jpg"),
+  require("../../../assets/images/avatars/driver6.jpg"),
+  require("../../../assets/images/avatars/driver7.jpg"),
+  require("../../../assets/images/avatars/driver8.jpg"),
 ];
 
+function pickFallbackAvatar(id: string) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return fallbackAvatars[Math.abs(hash) % fallbackAvatars.length];
+}
+
+// ─── warehouse mock data (unchanged) ─────────────────────────────────────────
 const WH_AVATAR_COLORS = ["#7C3AED","#2563EB","#059669","#D97706","#DC2626","#0891B2"];
 
 const WAREHOUSE_USERS: WarehouseUser[] = [
@@ -89,13 +95,6 @@ const WAREHOUSE_USERS: WarehouseUser[] = [
   { kind:"warehouse", id:"w4", name:"Ahmed Trabelsi",     extId:"WH-004", role:"Loading Staff",         status:"Active",  avatarColor:WH_AVATAR_COLORS[3] },
   { kind:"warehouse", id:"w5", name:"Sofia Klein",        extId:"WH-005", role:"Inventory Controller",  status:"Blocked", avatarColor:WH_AVATAR_COLORS[4] },
   { kind:"warehouse", id:"w6", name:"Youssef Mansour",    extId:"WH-006", role:"Shift Leader",          status:"Active",  avatarColor:WH_AVATAR_COLORS[5] },
-];
-
-const DRIVER_FILTERS: { label:string; key:FilterKey; count:number }[] = [
-  { label:"All",     key:"All",     count:342 },
-  { label:"Active",  key:"Active",  count:288 },
-  { label:"Pending", key:"Pending", count:24  },
-  { label:"Blocked", key:"Blocked", count:6   },
 ];
 
 const WH_FILTERS: { label:string; key:FilterKey; count:number }[] = [
@@ -251,13 +250,54 @@ const tb = StyleSheet.create({
 function UserCard({ user, onPress }: { user:AnyUser; onPress:()=>void }) {
   const cfg = statusCfg(user.status);
   const subLabel = user.kind === "driver" ? user.carType : user.role;
+  const [failedImageKeys, setFailedImageKeys] = useState<Record<string, boolean>>({});
+
+  const isDriver = user.kind === "driver";
+  const photoUri = isDriver ? (user as Driver).photoUri : null;
+
+  const imageFailureKey = `${user.id}:${photoUri ?? ""}`;
+
+  const hasRemotePhoto =
+    typeof photoUri === "string" && photoUri.trim().length > 0;
+  const shouldUseRemotePhoto = hasRemotePhoto && !failedImageKeys[imageFailureKey];
+
+  console.log(
+    "[Avatar]",
+    user.name,
+    "| url:", photoUri,
+    "| hasRemote:", hasRemotePhoto,
+    "| shouldUseRemote:", shouldUseRemotePhoto,
+  );
 
   return (
     <Pressable style={uc.card} onPress={onPress}>
       {/* avatar */}
       <View style={uc.avatarWrap}>
-        {user.kind === "driver" ? (
-          <Image source={user.photo} style={uc.photo} />
+        {isDriver ? (
+          <Image
+            source={
+              shouldUseRemotePhoto
+                ? { uri: photoUri! }
+                : pickFallbackAvatar(user.id)
+            }
+            style={uc.avatarImage}
+            resizeMode="cover"
+            onLoad={() => {
+              console.log("Driver photo loaded", user.name, photoUri);
+            }}
+            onError={(error) => {
+              console.log(
+                "Driver photo failed",
+                user.name,
+                photoUri,
+                error.nativeEvent
+              );
+              setFailedImageKeys((prev) => ({
+                ...prev,
+                [imageFailureKey]: true,
+              }));
+            }}
+          />
         ) : (
           <View style={[uc.initialsCircle, { backgroundColor: user.avatarColor + "33" }]}>
             <Text style={[uc.initialsText, { color: user.avatarColor }]}>
@@ -302,28 +342,28 @@ const uc = StyleSheet.create({
     gap:12,
   },
   avatarWrap: {
-    width:52,
-    height:52,
+    width:64,
+    height:64,
     flexShrink:0,
     position:"relative",
   },
-  photo: {
-    width:52,
-    height:52,
-    borderRadius:26,
+  avatarImage: {
+    width:64,
+    height:64,
+    borderRadius:32,
     backgroundColor:"rgba(255,255,255,0.06)",
   },
   initialsCircle: {
-    width:52,
-    height:52,
-    borderRadius:26,
+    width:64,
+    height:64,
+    borderRadius:32,
     alignItems:"center",
     justifyContent:"center",
   },
   initialsText: {
     fontFamily:"Poppins_700Bold",
-    fontSize:18,
-    lineHeight:22,
+    fontSize:20,
+    lineHeight:24,
   },
   diode: {
     position:"absolute",
@@ -349,23 +389,91 @@ const uc = StyleSheet.create({
 export default function AdminDriversScreen() {
   const router = useRouter();
   const [userType, setUserType]         = useState<UserType>("Drivers");
-  const [search, setSearch]             = useState("");
+  const [searchQuery, setSearchQuery]   = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("All");
 
-  const filters  = userType === "Drivers" ? DRIVER_FILTERS : WH_FILTERS;
-  const allUsers = userType === "Drivers" ? DRIVERS        : WAREHOUSE_USERS;
+  // Drivers tab — real data
+  const [drivers, setDrivers]           = useState<Driver[]>([]);
+  const [statusCounts, setStatusCounts] = useState({ all: 0, active: 0, pending: 0, blocked: 0 });
+  const [driversLoading, setDriversLoading] = useState(false);
+  const [driversError, setDriversError]     = useState<string | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  const filtered = (allUsers as AnyUser[]).filter(u => {
+  // Debounce search input (clear immediately, type → 300 ms delay)
+  useEffect(() => {
+    if (userType !== "Drivers") return;
+    if (!searchQuery) {
+      setDebouncedSearch("");
+      return;
+    }
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery, userType]);
+
+  // Fetch drivers from backend whenever tab/search/filter changes
+  useEffect(() => {
+    if (userType !== "Drivers") return;
+    const session = sessionStore.get();
+    if (session?.kind !== "admin") return;
+
+    setDriversLoading(true);
+    setDriversError(null);
+
+    const statusParam = activeFilter === "All" ? undefined : activeFilter.toLowerCase();
+
+    fetchAdminDrivers(session.access_token, {
+      search: debouncedSearch || undefined,
+      status: statusParam,
+      limit: 20,
+      offset: 0,
+    })
+      .then(data => {
+        const mapped: Driver[] = data.items.map(item => ({
+          kind: "driver" as const,
+          id: item.id,
+          name: item.full_name,
+          extId: item.display_driver_id,
+          carType: item.driver_type_label,
+          status: item.status_label,
+          photoUri: item.profile_photo_url
+            ? getDriverPhotoProxyUrl(item.id, session.access_token)
+            : null,
+          avatarColor: avatarColorFromId(item.id),
+        }));
+        setDrivers(mapped);
+        setStatusCounts(data.status_counts);
+        setDriversLoading(false);
+      })
+      .catch(err => {
+        setDriversError(String(err?.message ?? "Failed to load drivers."));
+        setDriversLoading(false);
+      });
+  }, [userType, debouncedSearch, activeFilter]);
+
+  // Warehouse tab — client-side filtering on mock data (unchanged)
+  const warehouseFiltered = (WAREHOUSE_USERS as AnyUser[]).filter(u => {
     const matchFilter = activeFilter === "All" || u.status === activeFilter;
-    const q = search.toLowerCase();
+    const q = searchQuery.toLowerCase();
     const matchSearch = !q || u.name.toLowerCase().includes(q) || u.extId.toLowerCase().includes(q);
     return matchFilter && matchSearch;
   });
 
+  const filtered: AnyUser[] = userType === "Drivers" ? drivers : warehouseFiltered;
+
+  // Filter chips
+  const driverFilters: { label:string; key:FilterKey; count:number }[] = [
+    { label:"All",     key:"All",     count:statusCounts.all     },
+    { label:"Active",  key:"Active",  count:statusCounts.active  },
+    { label:"Pending", key:"Pending", count:statusCounts.pending },
+    { label:"Blocked", key:"Blocked", count:statusCounts.blocked },
+  ];
+  const filters = userType === "Drivers" ? driverFilters : WH_FILTERS;
+
   const handleUserTypeChange = (t: UserType) => {
     setUserType(t);
     setActiveFilter("All");
-    setSearch("");
+    setSearchQuery("");
+    setDebouncedSearch("");
   };
 
   const handleTabPress = (i: number) => {
@@ -427,14 +535,15 @@ export default function AdminDriversScreen() {
           <TextInput
             style={s.searchInput}
             placeholder="Search users..."
-            placeholderTextColor={MUTED}
-            value={search}
-            onChangeText={setSearch}
+            placeholderTextColor="#8A8F98"
+            selectionColor="#FF7A00"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {search.length > 0 && (
-            <Pressable onPress={() => setSearch("")} hitSlop={8}>
+          {searchQuery.length > 0 && (
+            <Pressable onPress={() => setSearchQuery("")} hitSlop={8}>
               <Text style={s.clearBtn}>✕</Text>
             </Pressable>
           )}
@@ -466,14 +575,25 @@ export default function AdminDriversScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {filtered.map(u => (
-          <UserCard
-            key={u.id}
-            user={u}
-            onPress={() => handleCardPress(u)}
-          />
-        ))}
-        {filtered.length === 0 && (
+        {userType === "Drivers" && driversLoading && (
+          <View style={s.centerBox}>
+            <ActivityIndicator size="large" color={ORANGE} />
+          </View>
+        )}
+        {userType === "Drivers" && !driversLoading && driversError && (
+          <View style={s.centerBox}>
+            <Text style={s.errorText}>{driversError}</Text>
+          </View>
+        )}
+        {(!driversLoading || userType !== "Drivers") &&
+          filtered.map(u => (
+            <UserCard
+              key={u.id}
+              user={u}
+              onPress={() => handleCardPress(u)}
+            />
+          ))}
+        {!driversLoading && !driversError && filtered.length === 0 && (
           <View style={s.empty}>
             <Text style={s.emptyText}>No users found</Text>
           </View>
@@ -488,10 +608,12 @@ export default function AdminDriversScreen() {
         </Pressable>
       </View>
 
-      {/* bottom tabs */}
-      <SafeAreaView edges={["bottom"]} style={{ backgroundColor:TAB_BG }}>
-        <BottomTabs onPress={handleTabPress} />
-      </SafeAreaView>
+      {/* bottom tabs — absolutely positioned so keyboard cannot push it up */}
+      <View style={s.bottomNavWrap}>
+        <SafeAreaView edges={["bottom"]} style={{ backgroundColor:TAB_BG }}>
+          <BottomTabs onPress={handleTabPress} />
+        </SafeAreaView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -542,7 +664,7 @@ const s = StyleSheet.create({
   // search
   searchWrap: { paddingHorizontal:16, marginBottom:14 },
   searchBox:  { flexDirection:"row", alignItems:"center", backgroundColor:SURFACE, borderRadius:14, borderWidth:1, borderColor:BORDER, paddingHorizontal:14, paddingVertical:13, gap:10 },
-  searchInput:{ flex:1, fontFamily:"Poppins_400Regular", fontSize:13, color:WHITE, height:22 },
+  searchInput:{ flex:1, fontFamily:"Poppins_400Regular", fontSize:16, color:"#FFFFFF" },
   clearBtn:   { fontFamily:"Poppins_400Regular", fontSize:13, color:MUTED },
 
   // filter pills
@@ -568,8 +690,13 @@ const s = StyleSheet.create({
 
   // list
   list:      { paddingHorizontal:16 },
+  centerBox: { alignItems:"center", paddingVertical:40 },
   empty:     { alignItems:"center", paddingVertical:40 },
   emptyText: { fontFamily:"Poppins_400Regular", fontSize:14, color:MUTED },
+  errorText: { fontFamily:"Poppins_400Regular", fontSize:14, color:RED, textAlign:"center" },
+
+  // bottom nav
+  bottomNavWrap: { position:"absolute", bottom:0, left:0, right:0, zIndex:5 },
 
   // fab
   fabWrap: { position:"absolute", bottom:90, right:20, zIndex:10 },

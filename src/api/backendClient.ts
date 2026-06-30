@@ -217,7 +217,253 @@ export async function loginUser(
   return data as LoginResponse;
 }
 
-// ── Admin Dashboard ──────────────────────────────────────────────────────────
+// ── Driver photo proxy ───────────────────────────────────────────────────────
+// React Native on Android cannot always resolve the Supabase storage hostname.
+// Route photo requests through the backend instead.
+export function getDriverPhotoProxyUrl(
+  driverId: string,
+  accessToken: string,
+): string {
+  return `${BACKEND_BASE_URL}/api/v1/admin/drivers/${encodeURIComponent(driverId)}/photo?token=${encodeURIComponent(accessToken)}`;
+}
+
+// ── Admin Drivers ────────────────────────────────────────────────────────────
+
+export type DriverListItem = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  email: string;
+  external_driver_id: string | null;
+  display_driver_id: string;
+  car_type: string;
+  driver_type_label: string;
+  status: string;
+  status_label: "Active" | "Pending" | "Blocked";
+  status_color: string;
+  profile_photo_url: string | null;
+  created_at: string | null;
+};
+
+export type DriversListResponse = {
+  items: DriverListItem[];
+  total: number;
+  status_counts: {
+    all: number;
+    active: number;
+    pending: number;
+    blocked: number;
+  };
+};
+
+export async function fetchAdminDrivers(
+  accessToken: string,
+  params: { search?: string; status?: string; limit?: number; offset?: number } = {},
+): Promise<DriversListResponse> {
+  const url = new URL(`${BACKEND_BASE_URL}/api/v1/admin/drivers`);
+  if (params.search) url.searchParams.set("search", params.search);
+  if (params.status) url.searchParams.set("status", params.status);
+  if (params.limit != null) url.searchParams.set("limit", String(params.limit));
+  if (params.offset != null) url.searchParams.set("offset", String(params.offset));
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to load drivers."));
+  }
+  return data as DriversListResponse;
+}
+
+// ── Admin Driver Detail ───────────────────────────────────────────────────────
+
+export type DriverDetailResponse = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  external_driver_id: string | null;
+  display_driver_id: string;
+  car_type: string;
+  driver_type_label: string;
+  status: string;
+  status_label: string;
+  status_color: string;
+  profile_photo_url: string | null;
+  joined_date: string | null;
+  joined_date_label: string;
+};
+
+export async function fetchAdminDriverDetail(
+  accessToken: string,
+  driverId: string,
+): Promise<DriverDetailResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/drivers/${encodeURIComponent(driverId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to load driver details."));
+  }
+  return data as DriverDetailResponse;
+}
+
+// ── Assign External Driver ID ─────────────────────────────────────────────────
+
+export type AssignExternalDriverIdResponse = {
+  id: string;
+  external_driver_id: string;
+  display_driver_id: string;
+};
+
+export async function assignExternalDriverId(
+  accessToken: string,
+  driverId: string,
+  externalDriverId: string,
+): Promise<AssignExternalDriverIdResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/drivers/${encodeURIComponent(driverId)}/external-id`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ external_driver_id: externalDriverId }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to assign External Driver ID."));
+  }
+  return data as AssignExternalDriverIdResponse;
+}
+
+// ── Change Driver Status ──────────────────────────────────────────────────────
+
+export type ChangeDriverStatusResponse = {
+  id: string;
+  status: string;
+  status_label: string;
+  status_color: string;
+};
+
+export async function changeDriverStatus(
+  accessToken: string,
+  driverId: string,
+  newStatus: "active" | "pending" | "blocked",
+): Promise<ChangeDriverStatusResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/drivers/${encodeURIComponent(driverId)}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status: newStatus }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to change driver status."));
+  }
+  return data as ChangeDriverStatusResponse;
+}
+
+// ── Admin Driver Documents ────────────────────────────────────────────────────
+
+export type DriverDocumentsDriverInfo = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  display_driver_id: string;
+  driver_type_label: string;
+  status_label: string;
+  status_color: string;
+  profile_photo_url: string | null;
+};
+
+export type DriverDocumentsSummary = {
+  total: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+};
+
+export type DriverDocumentItem = {
+  id: string;
+  document_type: string;
+  title: string;
+  description: string;
+  status: string;
+  review_status: string;
+  status_label: string;
+  status_color: string;
+  uploaded_at: string | null;
+  uploaded_at_label: string;
+  file_name: string | null;
+  mime_type: string | null;
+  preview_url: string | null;
+  file_url: string | null;
+};
+
+export type DriverDocumentsResponse = {
+  driver: DriverDocumentsDriverInfo;
+  summary: DriverDocumentsSummary;
+  documents: DriverDocumentItem[];
+};
+
+export async function fetchAdminDriverDocuments(
+  accessToken: string,
+  driverId: string,
+): Promise<DriverDocumentsResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/drivers/${encodeURIComponent(driverId)}/documents`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to load driver documents."));
+  }
+  return data as DriverDocumentsResponse;
+}
+
+// ── Update Document Status ────────────────────────────────────────────────────
+
+export type UpdateDocumentStatusResponse = {
+  document: DriverDocumentItem;
+  summary: DriverDocumentsSummary;
+};
+
+export async function updateDocumentStatus(
+  accessToken: string,
+  driverId: string,
+  documentId: string,
+  newStatus: "approved" | "pending" | "rejected",
+): Promise<UpdateDocumentStatusResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/drivers/${encodeURIComponent(driverId)}/documents/${encodeURIComponent(documentId)}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status: newStatus }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to update document status."));
+  }
+  return data as UpdateDocumentStatusResponse;
+}
+
+// ── Admin Dashboard ───────────────────────────────────────────────────────────
 
 export type AdminDashboardSummary = {
   total_drivers: number;
