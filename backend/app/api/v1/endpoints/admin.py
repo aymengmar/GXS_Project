@@ -5,23 +5,37 @@ from app.db.supabase import supabase_admin
 from app.schemas.admin import (
     AssignExternalDriverIdRequest,
     AssignExternalDriverIdResponse,
+    AssignWarehouseExternalIdRequest,
+    AssignWarehouseExternalIdResponse,
     ChangeDriverStatusRequest,
     ChangeDriverStatusResponse,
+    ChangeWarehouseStatusRequest,
+    ChangeWarehouseStatusResponse,
+    CreateDriverRequest,
+    CreateDriverResponse,
+    CreateWarehouseUserRequest,
+    CreateWarehouseUserResponse,
     DashboardSummaryResponse,
     DriverDetailResponse,
     DriverDocumentsResponse,
     DriversListResponse,
     UpdateDocumentStatusRequest,
     UpdateDocumentStatusResponse,
+    WarehouseUsersListResponse,
 )
 from app.services.admin_service import (
     assign_external_driver_id,
+    assign_warehouse_external_id,
     change_driver_status,
+    change_warehouse_user_status,
+    create_driver,
+    create_warehouse_user,
     get_dashboard_summary,
     get_driver_detail,
     get_driver_documents,
     get_driver_photo_bytes,
     get_drivers_list,
+    get_warehouse_users_list,
     update_document_status,
 )
 
@@ -178,6 +192,15 @@ def get_driver_photo(driver_id: str, token: str = Query(...)) -> Response:
     return Response(content=image_bytes, media_type=media_type)
 
 
+@router.post("/drivers", response_model=CreateDriverResponse, status_code=status.HTTP_201_CREATED)
+def create_driver_endpoint(
+    body: CreateDriverRequest,
+    authorization: str = Header(...),
+) -> CreateDriverResponse:
+    _require_admin(authorization)
+    return create_driver(body)
+
+
 @router.get("/drivers", response_model=DriversListResponse)
 def list_drivers(
     authorization: str = Header(...),
@@ -193,3 +216,49 @@ def list_drivers(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/warehouse-users", response_model=WarehouseUsersListResponse)
+def list_warehouse_users(
+    authorization: str = Header(...),
+    search: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> WarehouseUsersListResponse:
+    _require_admin(authorization)
+    return get_warehouse_users_list(
+        search=search,
+        status_filter=status,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.patch("/warehouse-users/{user_id}/status", response_model=ChangeWarehouseStatusResponse)
+def change_warehouse_status_endpoint(
+    user_id: str,
+    body: ChangeWarehouseStatusRequest,
+    authorization: str = Header(...),
+) -> ChangeWarehouseStatusResponse:
+    _require_admin(authorization)
+    return change_warehouse_user_status(user_id, body.status)
+
+
+@router.patch("/warehouse-users/{user_id}/external-id", response_model=AssignWarehouseExternalIdResponse)
+def assign_warehouse_external_id_endpoint(
+    user_id: str,
+    body: AssignWarehouseExternalIdRequest,
+    authorization: str = Header(...),
+) -> AssignWarehouseExternalIdResponse:
+    _require_admin(authorization)
+    return assign_warehouse_external_id(user_id, body.external_id)
+
+
+@router.post("/warehouse-users", response_model=CreateWarehouseUserResponse, status_code=status.HTTP_201_CREATED)
+def create_warehouse_user_endpoint(
+    body: CreateWarehouseUserRequest,
+    authorization: str = Header(...),
+) -> CreateWarehouseUserResponse:
+    _require_admin(authorization)
+    return create_warehouse_user(body)

@@ -1,4 +1,12 @@
-import { fetchAdminDrivers, getDriverPhotoProxyUrl } from "@/api/backendClient";
+import {
+  CreateDriverResponse,
+  CreateWarehouseUserResponse,
+  fetchAdminDrivers,
+  fetchAdminWarehouseUsers,
+  getDriverPhotoProxyUrl,
+  WarehouseUserListItem,
+} from "@/api/backendClient";
+import AddNewUserModal from "@/components/admin/AddNewUserModal";
 import { sessionStore } from "@/store/sessionStore";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -51,9 +59,16 @@ type WarehouseUser = {
   id: string;
   name: string;
   extId: string;
-  role: string;
+  city: string;
   status: UserStatus;
   avatarColor: string;
+  // fields forwarded to details screen
+  email: string;
+  phone: string | null;
+  external_id: string | null;
+  statusLabel: string;
+  statusColor: string;
+  createdAt: string | null;
 };
 
 type AnyUser = Driver | WarehouseUser;
@@ -85,31 +100,13 @@ function pickFallbackAvatar(id: string) {
   return fallbackAvatars[Math.abs(hash) % fallbackAvatars.length];
 }
 
-// ─── warehouse mock data (unchanged) ─────────────────────────────────────────
-const WH_AVATAR_COLORS = ["#7C3AED","#2563EB","#059669","#D97706","#DC2626","#0891B2"];
-
-const WAREHOUSE_USERS: WarehouseUser[] = [
-  { kind:"warehouse", id:"w1", name:"Fatima Ben Ali",     extId:"WH-001", role:"Warehouse Supervisor",  status:"Active",  avatarColor:WH_AVATAR_COLORS[0] },
-  { kind:"warehouse", id:"w2", name:"Omar Haddad",        extId:"WH-002", role:"Picker",                status:"Active",  avatarColor:WH_AVATAR_COLORS[1] },
-  { kind:"warehouse", id:"w3", name:"Lina Müller",        extId:"WH-003", role:"Packer",                status:"Pending", avatarColor:WH_AVATAR_COLORS[2] },
-  { kind:"warehouse", id:"w4", name:"Ahmed Trabelsi",     extId:"WH-004", role:"Loading Staff",         status:"Active",  avatarColor:WH_AVATAR_COLORS[3] },
-  { kind:"warehouse", id:"w5", name:"Sofia Klein",        extId:"WH-005", role:"Inventory Controller",  status:"Blocked", avatarColor:WH_AVATAR_COLORS[4] },
-  { kind:"warehouse", id:"w6", name:"Youssef Mansour",    extId:"WH-006", role:"Shift Leader",          status:"Active",  avatarColor:WH_AVATAR_COLORS[5] },
-];
-
-const WH_FILTERS: { label:string; key:FilterKey; count:number }[] = [
-  { label:"All",     key:"All",     count:18 },
-  { label:"Active",  key:"Active",  count:14 },
-  { label:"Pending", key:"Pending", count:3  },
-  { label:"Blocked", key:"Blocked", count:1  },
-];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 function statusCfg(s: UserStatus) {
   switch (s) {
-    case "Active":  return { dot: GREEN, bg: "rgba(34,197,94,0.12)",  text: "#4ADE80" };
-    case "Pending": return { dot: AMBER, bg: "rgba(245,158,11,0.12)", text: "#FCD34D" };
-    case "Blocked": return { dot: RED,   bg: "rgba(239,68,68,0.12)",  text: "#FC8181" };
+    case "Active":   return { dot: GREEN, bg: "rgba(34,197,94,0.12)",  text: "#4ADE80" };
+    case "Pending":  return { dot: AMBER, bg: "rgba(245,158,11,0.12)", text: "#FCD34D" };
+    case "Blocked":  return { dot: RED,   bg: "rgba(239,68,68,0.12)",  text: "#FC8181" };
   }
 }
 
@@ -249,7 +246,7 @@ const tb = StyleSheet.create({
 // ─── user card ────────────────────────────────────────────────────────────────
 function UserCard({ user, onPress }: { user:AnyUser; onPress:()=>void }) {
   const cfg = statusCfg(user.status);
-  const subLabel = user.kind === "driver" ? user.carType : user.role;
+  const subLabel = user.kind === "driver" ? user.carType : user.city;
   const [failedImageKeys, setFailedImageKeys] = useState<Record<string, boolean>>({});
 
   const isDriver = user.kind === "driver";
@@ -388,6 +385,8 @@ const uc = StyleSheet.create({
 // ─── screen ───────────────────────────────────────────────────────────────────
 export default function AdminDriversScreen() {
   const router = useRouter();
+  const [addUserVisible, setAddUserVisible] = useState(false);
+
   const [userType, setUserType]         = useState<UserType>("Drivers");
   const [searchQuery, setSearchQuery]   = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("All");
@@ -398,19 +397,41 @@ export default function AdminDriversScreen() {
   const [driversLoading, setDriversLoading] = useState(false);
   const [driversError, setDriversError]     = useState<string | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Debounce search input (clear immediately, type → 300 ms delay)
+  // Warehouse tab — real data
+  const [warehouseUsers, setWarehouseUsers] = useState<WarehouseUser[]>([]);
+  const [warehouseStatusCounts, setWarehouseStatusCounts] = useState({ all: 0, active: 0, pending: 0, blocked: 0 });
+  const [warehouseLoading, setWarehouseLoading] = useState(false);
+  const [warehouseError, setWarehouseError]     = useState<string | null>(null);
+  const [warehouseDebouncedSearch, setWarehouseDebouncedSearch] = useState("");
+  const [warehouseRefreshKey, setWarehouseRefreshKey] = useState(0);
+
+  // Debounce — drivers
   useEffect(() => {
     if (userType !== "Drivers") return;
-    if (!searchQuery) {
-      setDebouncedSearch("");
-      return;
-    }
+    if (!searchQuery) { setDebouncedSearch(""); return; }
     const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
     return () => clearTimeout(t);
   }, [searchQuery, userType]);
 
-  // Fetch drivers from backend whenever tab/search/filter changes
+  // Debounce — warehouse
+  useEffect(() => {
+    if (userType !== "Warehouse") return;
+    if (!searchQuery) { setWarehouseDebouncedSearch(""); return; }
+    const t = setTimeout(() => setWarehouseDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery, userType]);
+
+  const handleDriverCreated = (_driver: CreateDriverResponse) => {
+    if (userType === "Drivers") setRefreshKey(k => k + 1);
+  };
+
+  const handleWarehouseUserCreated = (_user: CreateWarehouseUserResponse) => {
+    if (userType === "Warehouse") setWarehouseRefreshKey(k => k + 1);
+  };
+
+  // Fetch drivers from backend
   useEffect(() => {
     if (userType !== "Drivers") return;
     const session = sessionStore.get();
@@ -448,17 +469,52 @@ export default function AdminDriversScreen() {
         setDriversError(String(err?.message ?? "Failed to load drivers."));
         setDriversLoading(false);
       });
-  }, [userType, debouncedSearch, activeFilter]);
+  }, [userType, debouncedSearch, activeFilter, refreshKey]);
 
-  // Warehouse tab — client-side filtering on mock data (unchanged)
-  const warehouseFiltered = (WAREHOUSE_USERS as AnyUser[]).filter(u => {
-    const matchFilter = activeFilter === "All" || u.status === activeFilter;
-    const q = searchQuery.toLowerCase();
-    const matchSearch = !q || u.name.toLowerCase().includes(q) || u.extId.toLowerCase().includes(q);
-    return matchFilter && matchSearch;
-  });
+  // Fetch warehouse users from backend
+  useEffect(() => {
+    if (userType !== "Warehouse") return;
+    const session = sessionStore.get();
+    if (session?.kind !== "admin") return;
 
-  const filtered: AnyUser[] = userType === "Drivers" ? drivers : warehouseFiltered;
+    setWarehouseLoading(true);
+    setWarehouseError(null);
+
+    const statusParam = activeFilter === "All" ? undefined : activeFilter.toLowerCase();
+
+    fetchAdminWarehouseUsers(session.access_token, {
+      search: warehouseDebouncedSearch || undefined,
+      status: statusParam,
+      limit: 20,
+      offset: 0,
+    })
+      .then(data => {
+        const mapped: WarehouseUser[] = data.items.map((item: WarehouseUserListItem) => ({
+          kind: "warehouse" as const,
+          id: item.id,
+          name: item.full_name,
+          extId: item.display_external_id,
+          city: item.city ?? "",
+          status: item.status_label as UserStatus,
+          avatarColor: avatarColorFromId(item.id),
+          email: item.email,
+          phone: item.phone,
+          external_id: item.external_id,
+          statusLabel: item.status_label,
+          statusColor: item.status_color,
+          createdAt: item.created_at,
+        }));
+        setWarehouseUsers(mapped);
+        setWarehouseStatusCounts(data.status_counts);
+        setWarehouseLoading(false);
+      })
+      .catch(() => {
+        setWarehouseError("Could not load warehouse users");
+        setWarehouseLoading(false);
+      });
+  }, [userType, warehouseDebouncedSearch, activeFilter, warehouseRefreshKey]);
+
+  const filtered: AnyUser[] = userType === "Drivers" ? drivers : warehouseUsers;
 
   // Filter chips
   const driverFilters: { label:string; key:FilterKey; count:number }[] = [
@@ -467,13 +523,20 @@ export default function AdminDriversScreen() {
     { label:"Pending", key:"Pending", count:statusCounts.pending },
     { label:"Blocked", key:"Blocked", count:statusCounts.blocked },
   ];
-  const filters = userType === "Drivers" ? driverFilters : WH_FILTERS;
+  const warehouseFilters: { label:string; key:FilterKey; count:number }[] = [
+    { label:"All",     key:"All",     count:warehouseStatusCounts.all     },
+    { label:"Active",  key:"Active",  count:warehouseStatusCounts.active  },
+    { label:"Pending", key:"Pending", count:warehouseStatusCounts.pending },
+    { label:"Blocked", key:"Blocked", count:warehouseStatusCounts.blocked },
+  ];
+  const filters = userType === "Drivers" ? driverFilters : warehouseFilters;
 
   const handleUserTypeChange = (t: UserType) => {
     setUserType(t);
     setActiveFilter("All");
     setSearchQuery("");
     setDebouncedSearch("");
+    setWarehouseDebouncedSearch("");
   };
 
   const handleTabPress = (i: number) => {
@@ -486,7 +549,23 @@ export default function AdminDriversScreen() {
     if (user.kind === "driver") {
       router.push(`/admin/driver-details?id=${user.id}` as never);
     } else {
-      console.log("Warehouse user pressed:", user.name, user.extId);
+      router.push({
+        pathname: "/admin/warehouse-details" as never,
+        params: {
+          id: user.id,
+          full_name: user.name,
+          email: user.email,
+          phone: user.phone ?? "",
+          city: user.city,
+          external_id: user.external_id ?? "",
+          display_external_id: user.extId,
+          status: user.status,
+          status_label: user.statusLabel,
+          status_color: user.statusColor,
+          created_at: user.createdAt ?? "",
+          avatar_color: user.avatarColor,
+        },
+      } as never);
     }
   };
 
@@ -575,6 +654,7 @@ export default function AdminDriversScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Drivers: Loading / Error */}
         {userType === "Drivers" && driversLoading && (
           <View style={s.centerBox}>
             <ActivityIndicator size="large" color={ORANGE} />
@@ -585,7 +665,22 @@ export default function AdminDriversScreen() {
             <Text style={s.errorText}>{driversError}</Text>
           </View>
         )}
-        {(!driversLoading || userType !== "Drivers") &&
+
+        {/* Warehouse: Loading / Error */}
+        {userType === "Warehouse" && warehouseLoading && (
+          <View style={s.centerBox}>
+            <ActivityIndicator size="large" color={ORANGE} />
+          </View>
+        )}
+        {userType === "Warehouse" && !warehouseLoading && warehouseError && (
+          <View style={s.centerBox}>
+            <Text style={s.errorText}>{warehouseError}</Text>
+          </View>
+        )}
+
+        {/* User list — shown only when not loading and no error */}
+        {((userType === "Drivers" && !driversLoading && !driversError) ||
+          (userType === "Warehouse" && !warehouseLoading && !warehouseError)) &&
           filtered.map(u => (
             <UserCard
               key={u.id}
@@ -593,20 +688,34 @@ export default function AdminDriversScreen() {
               onPress={() => handleCardPress(u)}
             />
           ))}
-        {!driversLoading && !driversError && filtered.length === 0 && (
-          <View style={s.empty}>
-            <Text style={s.emptyText}>No users found</Text>
-          </View>
-        )}
+
+        {/* Empty state */}
+        {((userType === "Drivers" && !driversLoading && !driversError) ||
+          (userType === "Warehouse" && !warehouseLoading && !warehouseError)) &&
+          filtered.length === 0 && (
+            <View style={s.empty}>
+              <Text style={s.emptyText}>
+                {userType === "Warehouse" ? "No warehouse users found" : "No users found"}
+              </Text>
+            </View>
+          )}
         <View style={{ height:90 }} />
       </ScrollView>
 
       {/* FAB */}
       <View style={s.fabWrap} pointerEvents="box-none">
-        <Pressable style={s.fab}>
+        <Pressable style={s.fab} onPress={() => setAddUserVisible(true)}>
           <Text style={s.fabPlus}>+</Text>
         </Pressable>
       </View>
+
+      <AddNewUserModal
+        visible={addUserVisible}
+        onClose={() => setAddUserVisible(false)}
+        accessToken={sessionStore.get()?.access_token}
+        onDriverCreated={handleDriverCreated}
+        onWarehouseUserCreated={handleWarehouseUserCreated}
+      />
 
       {/* bottom tabs — absolutely positioned so keyboard cannot push it up */}
       <View style={s.bottomNavWrap}>

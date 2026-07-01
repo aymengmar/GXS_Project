@@ -278,6 +278,15 @@ export async function fetchAdminDrivers(
 
 // ── Admin Driver Detail ───────────────────────────────────────────────────────
 
+export type AdminOwnCarDetails = {
+  id: string;
+  vehicle_make_model: string | null;
+  plate_number: string | null;
+  insurance_provider: string | null;
+  insurance_number: string | null;
+  vehicle_year: number | null;
+};
+
 export type DriverDetailResponse = {
   id: string;
   auth_user_id: string;
@@ -294,6 +303,7 @@ export type DriverDetailResponse = {
   profile_photo_url: string | null;
   joined_date: string | null;
   joined_date_label: string;
+  own_car_details: AdminOwnCarDetails | null;
 };
 
 export async function fetchAdminDriverDetail(
@@ -461,6 +471,206 @@ export async function updateDocumentStatus(
     throw new Error(extractErrorMessage(data, "Failed to update document status."));
   }
   return data as UpdateDocumentStatusResponse;
+}
+
+// ── Create Admin Driver ───────────────────────────────────────────────────────
+
+export type CreateDriverPayload = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  postal_code: string;
+  car_type: "own_car" | "company_car";
+  external_driver_id: string;
+};
+
+export type CreateDriverResponse = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  postal_code: string | null;
+  car_type: string;
+  driver_type_label: string;
+  status: string;
+  status_label: string;
+  status_color: string;
+  external_driver_id: string | null;
+  display_driver_id: string;
+  profile_photo_url: string | null;
+};
+
+export async function adminCreateDriver(
+  accessToken: string,
+  payload: CreateDriverPayload,
+): Promise<CreateDriverResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/admin/drivers`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to create driver."));
+  }
+  return data as CreateDriverResponse;
+}
+
+// ── Create Warehouse User ─────────────────────────────────────────────────────
+
+export type CreateWarehouseUserPayload = {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  city: string;
+  external_id: string;
+};
+
+export type CreateWarehouseUserResponse = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  city: string;
+  external_id: string;
+  role: string;
+  status: string;
+  status_label: string;
+  status_color: string;
+  // TODO: in production, email this password — do not return or display it
+  temporary_password?: string;
+};
+
+export async function adminCreateWarehouseUser(
+  accessToken: string,
+  payload: CreateWarehouseUserPayload,
+): Promise<CreateWarehouseUserResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/admin/warehouse-users`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to create warehouse user."));
+  }
+  return data as CreateWarehouseUserResponse;
+}
+
+// ── Admin Warehouse Users ─────────────────────────────────────────────────────
+
+export type WarehouseUserListItem = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  city: string | null;
+  external_id: string | null;
+  display_external_id: string;
+  status: string;
+  status_label: "Active" | "Pending" | "Blocked";
+  status_color: string;
+  created_at: string | null;
+};
+
+export type WarehouseUsersListResponse = {
+  items: WarehouseUserListItem[];
+  total: number;
+  status_counts: {
+    all: number;
+    active: number;
+    pending: number;
+    blocked: number;
+  };
+};
+
+export async function fetchAdminWarehouseUsers(
+  accessToken: string,
+  params: { search?: string; status?: string; limit?: number; offset?: number } = {},
+): Promise<WarehouseUsersListResponse> {
+  const url = new URL(`${BACKEND_BASE_URL}/api/v1/admin/warehouse-users`);
+  if (params.search) url.searchParams.set("search", params.search);
+  if (params.status) url.searchParams.set("status", params.status);
+  if (params.limit != null) url.searchParams.set("limit", String(params.limit));
+  if (params.offset != null) url.searchParams.set("offset", String(params.offset));
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to load warehouse users."));
+  }
+  return data as WarehouseUsersListResponse;
+}
+
+// ── Warehouse User Status & External ID ──────────────────────────────────────
+
+export type ChangeWarehouseStatusResponse = {
+  id: string;
+  status: string;
+  status_label: string;
+  status_color: string;
+  is_active: boolean;
+};
+
+export async function changeWarehouseUserStatus(
+  accessToken: string,
+  userId: string,
+  newStatus: "active" | "pending" | "blocked",
+): Promise<ChangeWarehouseStatusResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/warehouse-users/${userId}/status`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ status: newStatus }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(extractErrorMessage(data, "Failed to change warehouse user status."));
+  return data as ChangeWarehouseStatusResponse;
+}
+
+export type AssignWarehouseExternalIdResponse = {
+  id: string;
+  external_id: string;
+  display_external_id: string;
+};
+
+export async function assignWarehouseExternalId(
+  accessToken: string,
+  userId: string,
+  externalId: string,
+): Promise<AssignWarehouseExternalIdResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/admin/warehouse-users/${userId}/external-id`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ external_id: externalId }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(extractErrorMessage(data, "Failed to assign External ID."));
+  return data as AssignWarehouseExternalIdResponse;
 }
 
 // ── Admin Dashboard ───────────────────────────────────────────────────────────

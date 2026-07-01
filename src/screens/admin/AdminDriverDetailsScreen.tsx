@@ -229,6 +229,27 @@ function DocIcon() {
   );
 }
 
+function PlateIcon() {
+  return (
+    <View style={{ width: 20, height: 14 }}>
+      <View style={{ width: 20, height: 14, borderRadius: 3, borderWidth: 1.5, borderColor: "#60A5FA" }} />
+      <View style={{ position: "absolute", left: 3, top: 4, right: 3, height: 1.5, backgroundColor: "#60A5FA", borderRadius: 1 }} />
+      <View style={{ position: "absolute", left: 3, top: 7.5, width: 7, height: 1.5, backgroundColor: "#60A5FA", borderRadius: 1 }} />
+    </View>
+  );
+}
+
+function InsuranceNumberIcon() {
+  return (
+    <View style={{ width: 16, height: 20 }}>
+      <View style={{ width: 16, height: 20, borderRadius: 3, borderWidth: 1.5, borderColor: "#A78BFA" }} />
+      <View style={{ position: "absolute", top: 5, left: 3, right: 3, height: 1.5, backgroundColor: "#A78BFA", borderRadius: 1 }} />
+      <View style={{ position: "absolute", top: 9, left: 3, right: 3, height: 1.5, backgroundColor: "#A78BFA", borderRadius: 1 }} />
+      <View style={{ position: "absolute", top: 13, left: 3, width: 5, height: 1.5, backgroundColor: "#A78BFA", borderRadius: 1 }} />
+    </View>
+  );
+}
+
 // ─── tab icons ────────────────────────────────────────────────────────────────
 function GridIcon({ color }: { color: string }) {
   return (
@@ -650,6 +671,56 @@ export default function AdminDriverDetailsScreen() {
               />
             </View>
 
+            {/* ── own car details card ── */}
+            {driver.car_type === "own_car" && (
+              <View style={s.card}>
+                <View style={s.cardHeader}>
+                  <View style={s.cardIconWrap}>
+                    <CarIcon />
+                  </View>
+                  <Text style={s.cardTitle}>Own Car Details</Text>
+                </View>
+                {driver.own_car_details ? (
+                  <>
+                    <InfoRow
+                      icon={<CarIcon />}
+                      label="Vehicle"
+                      value={driver.own_car_details.vehicle_make_model ?? "Not provided"}
+                    />
+                    <InfoRow
+                      icon={<PlateIcon />}
+                      label="Plate Number"
+                      value={driver.own_car_details.plate_number ?? "Not provided"}
+                    />
+                    <InfoRow
+                      icon={<CalendarIcon />}
+                      label="Vehicle Year"
+                      value={
+                        driver.own_car_details.vehicle_year != null
+                          ? String(driver.own_car_details.vehicle_year)
+                          : "Not provided"
+                      }
+                    />
+                    <InfoRow
+                      icon={<ShieldIcon />}
+                      label="Insurance Provider"
+                      value={driver.own_car_details.insurance_provider ?? "Not provided"}
+                    />
+                    <InfoRow
+                      icon={<InsuranceNumberIcon />}
+                      label="Insurance Number"
+                      value={driver.own_car_details.insurance_number ?? "Not provided"}
+                      last
+                    />
+                  </>
+                ) : (
+                  <View style={s.ownCarEmpty}>
+                    <Text style={s.ownCarEmptyText}>Own car details not available</Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* ── statistics card (static) ── */}
             <View style={s.card}>
               <View style={s.cardHeader}>
@@ -830,6 +901,10 @@ const s = StyleSheet.create({
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 },
   cardIconWrap:{ width: 36, height: 36, borderRadius: 10, backgroundColor: FAINT, alignItems: "center", justifyContent: "center" },
   cardTitle:  { fontFamily: "Poppins_600SemiBold", fontSize: 15, color: WHITE },
+
+  // own car empty
+  ownCarEmpty:     { paddingVertical: 18, alignItems: "center" },
+  ownCarEmptyText: { fontFamily: "Poppins_400Regular", fontSize: 13, color: MUTED },
 
   // stats
   statsRow: { flexDirection: "row", gap: 10, paddingBottom: 12, paddingTop: 8 },

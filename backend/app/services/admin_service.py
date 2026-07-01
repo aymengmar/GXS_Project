@@ -1,4 +1,6 @@
 import mimetypes
+import secrets
+import string
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status as http_status
@@ -6,7 +8,13 @@ from fastapi import HTTPException, status as http_status
 from app.db.supabase import supabase_admin
 from app.schemas.admin import (
     AssignExternalDriverIdResponse,
+    AssignWarehouseExternalIdResponse,
     ChangeDriverStatusResponse,
+    ChangeWarehouseStatusResponse,
+    CreateDriverRequest,
+    CreateDriverResponse,
+    CreateWarehouseUserRequest,
+    CreateWarehouseUserResponse,
     DashboardSummaryResponse,
     DriverDetailResponse,
     DriverDocumentItem,
@@ -16,8 +24,12 @@ from app.schemas.admin import (
     DriverListItem,
     DriverStatusBreakdown,
     DriversListResponse,
+    OwnCarDetails,
     StatusCounts,
     UpdateDocumentStatusResponse,
+    WarehouseStatusCounts,
+    WarehouseUserListItem,
+    WarehouseUsersListResponse,
 )
 
 _STATUS_LABEL: dict[str, str] = {
@@ -522,6 +534,109 @@ def update_document_status(
     )
 
 
+def create_driver(req: CreateDriverRequest) -> CreateDriverResponse:
+    # Duplicate email check
+    existing = (
+        supabase_admin.table("app_users")
+        .select("id")
+        .eq("email", str(req.email))
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    # External Driver ID uniqueness check
+    conflict = (
+        supabase_admin.table("driver_profiles")
+        .select("id")
+        .eq("external_driver_id", req.external_driver_id)
+        .execute()
+    )
+    if conflict.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="This External Driver ID is already assigned to another driver.",
+        )
+
+    # Generate a secure temporary password — driver must reset on first login
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    temp_password = "".join(secrets.choice(alphabet) for _ in range(20))
+
+    # Create Supabase Auth user (email pre-confirmed, no verification email)
+    try:
+        auth_response = supabase_admin.auth.admin.create_user(
+            {
+                "email": str(req.email),
+                "password": temp_password,
+                "email_confirm": True,
+            }
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Could not create auth user. The email may already be registered.",
+        ) from exc
+
+    auth_user_id = str(auth_response.user.id)
+    full_name = f"{req.first_name} {req.last_name}"
+
+    try:
+        supabase_admin.table("app_users").insert(
+            {
+                "auth_user_id": auth_user_id,
+                "email": str(req.email),
+                "full_name": full_name,
+                "role": "driver",
+                "is_active": True,
+            }
+        ).execute()
+
+        profile_result = supabase_admin.table("driver_profiles").insert(
+            {
+                "auth_user_id": auth_user_id,
+                "full_name": full_name,
+                "email": str(req.email),
+                "phone": req.phone,
+                "postal_code": req.postal_code,
+                "car_type": req.car_type,
+                "status": "approved",
+                "external_driver_id": req.external_driver_id or None,
+            }
+        ).execute()
+    except Exception as exc:
+        try:
+            supabase_admin.auth.admin.delete_user(auth_user_id)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create driver profile. Please try again.",
+        ) from exc
+
+    profile = profile_result.data[0]
+
+    ext_id = req.external_driver_id or None
+    return CreateDriverResponse(
+        id=str(profile["id"]),
+        auth_user_id=auth_user_id,
+        full_name=full_name,
+        email=str(req.email),
+        phone=req.phone,
+        postal_code=req.postal_code,
+        car_type=req.car_type,
+        driver_type_label=_CAR_TYPE_LABEL.get(req.car_type, req.car_type),
+        status="approved",
+        status_label="Active",
+        status_color="green",
+        external_driver_id=ext_id,
+        display_driver_id=ext_id if ext_id else "Not assigned",
+        profile_photo_url=None,
+    )
+
+
 def get_driver_detail(driver_id: str) -> DriverDetailResponse | None:
     profile_result = (
         supabase_admin.table("driver_profiles")
@@ -551,6 +666,32 @@ def get_driver_detail(driver_id: str) -> DriverDetailResponse | None:
         doc = doc_result.data[0]
         photo_url = _signed_url(doc["storage_bucket"], doc["storage_path"])
 
+    own_car_details: OwnCarDetails | None = None
+    if car_type == "own_car":
+        ocd_result = (
+            supabase_admin.table("own_car_details")
+            .select("id, vehicle_make_model, plate_number, insurance_provider, insurance_number, vehicle_year")
+            .eq("driver_profile_id", str(profile["id"]))
+            .execute()
+        )
+        if not ocd_result.data:
+            ocd_result = (
+                supabase_admin.table("own_car_details")
+                .select("id, vehicle_make_model, plate_number, insurance_provider, insurance_number, vehicle_year")
+                .eq("auth_user_id", str(auth_uid))
+                .execute()
+            )
+        if ocd_result.data:
+            raw = ocd_result.data[0]
+            own_car_details = OwnCarDetails(
+                id=str(raw["id"]),
+                vehicle_make_model=raw.get("vehicle_make_model"),
+                plate_number=raw.get("plate_number"),
+                insurance_provider=raw.get("insurance_provider"),
+                insurance_number=raw.get("insurance_number"),
+                vehicle_year=raw.get("vehicle_year"),
+            )
+
     return DriverDetailResponse(
         id=str(profile["id"]),
         auth_user_id=str(auth_uid),
@@ -567,4 +708,306 @@ def get_driver_detail(driver_id: str) -> DriverDetailResponse | None:
         profile_photo_url=photo_url,
         joined_date=joined_date,
         joined_date_label=_format_joined_date(joined_date),
+        own_car_details=own_car_details,
+    )
+
+
+_WH_STATUS_LABEL: dict[str, str] = {
+    "active":  "Active",
+    "pending": "Pending",
+    "blocked": "Blocked",
+}
+_WH_STATUS_COLOR: dict[str, str] = {
+    "active":  "green",
+    "pending": "yellow",
+    "blocked": "red",
+}
+_WH_VALID_STATUSES = {"active", "pending", "blocked"}
+_WH_CHANGE_STATUSES = {"active", "pending", "blocked"}
+_WH_STATUS_IS_ACTIVE: dict[str, bool] = {
+    "active":  True,
+    "pending": False,
+    "blocked": False,
+}
+
+
+def get_warehouse_users_list(
+    search: str | None,
+    status_filter: str | None,
+    limit: int,
+    offset: int,
+) -> WarehouseUsersListResponse:
+    query = supabase_admin.table("warehouse_profiles").select(
+        "id, auth_user_id, full_name, email, phone, city, external_id, status, created_at",
+        count="exact",
+    )
+    if search:
+        query = query.or_(
+            f"full_name.ilike.%{search}%,email.ilike.%{search}%,external_id.ilike.%{search}%"
+        )
+    if status_filter and status_filter in _WH_VALID_STATUSES:
+        query = query.eq("status", status_filter)
+
+    result = (
+        query.order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+        .execute()
+    )
+    total = result.count or 0
+    profiles = result.data or []
+
+    items: list[WarehouseUserListItem] = []
+    for profile in profiles:
+        ext_id = profile.get("external_id")
+        db_st  = profile.get("status") or ""
+        items.append(
+            WarehouseUserListItem(
+                id=str(profile["id"]),
+                auth_user_id=str(profile["auth_user_id"]),
+                full_name=profile.get("full_name") or "",
+                email=profile.get("email") or "",
+                phone=profile.get("phone"),
+                city=profile.get("city"),
+                external_id=ext_id,
+                display_external_id=ext_id if ext_id else "Not assigned",
+                status=db_st,
+                status_label=_WH_STATUS_LABEL.get(db_st, db_st),
+                status_color=_WH_STATUS_COLOR.get(db_st, "gray"),
+                created_at=profile.get("created_at"),
+            )
+        )
+
+    all_count     = _count_table("warehouse_profiles")
+    active_count  = _count_table("warehouse_profiles", {"status": "active"})
+    pending_count = _count_table("warehouse_profiles", {"status": "pending"})
+    blocked_count = _count_table("warehouse_profiles", {"status": "blocked"})
+
+    return WarehouseUsersListResponse(
+        items=items,
+        total=total,
+        status_counts=WarehouseStatusCounts(
+            all=all_count,
+            active=active_count,
+            pending=pending_count,
+            blocked=blocked_count,
+        ),
+    )
+
+
+def change_warehouse_user_status(user_id: str, requested_status: str) -> ChangeWarehouseStatusResponse:
+    if requested_status not in _WH_CHANGE_STATUSES:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Status must be one of: active, pending, blocked.",
+        )
+
+    profile_result = (
+        supabase_admin.table("warehouse_profiles")
+        .select("id, auth_user_id")
+        .eq("id", user_id)
+        .execute()
+    )
+    if not profile_result.data:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Warehouse user not found.")
+
+    auth_user_id = profile_result.data[0]["auth_user_id"]
+    is_active = _WH_STATUS_IS_ACTIVE[requested_status]
+
+    try:
+        supabase_admin.table("warehouse_profiles").update(
+            {"status": requested_status, "updated_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", user_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not update warehouse status: {exc}",
+        ) from exc
+
+    try:
+        supabase_admin.table("app_users").update(
+            {"is_active": is_active}
+        ).eq("auth_user_id", auth_user_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Status updated but could not sync app_users.is_active: {exc}",
+        ) from exc
+
+    return ChangeWarehouseStatusResponse(
+        id=user_id,
+        status=requested_status,
+        status_label=_WH_STATUS_LABEL.get(requested_status, requested_status),
+        status_color=_WH_STATUS_COLOR.get(requested_status, "gray"),
+        is_active=is_active,
+    )
+
+
+def assign_warehouse_external_id(user_id: str, external_id: str) -> AssignWarehouseExternalIdResponse:
+    ext_id = external_id.strip()
+    if not ext_id:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="External ID cannot be empty.")
+
+    profile_result = (
+        supabase_admin.table("warehouse_profiles")
+        .select("id")
+        .eq("id", user_id)
+        .execute()
+    )
+    if not profile_result.data:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Warehouse user not found.")
+
+    conflict_result = (
+        supabase_admin.table("warehouse_profiles")
+        .select("id")
+        .eq("external_id", ext_id)
+        .neq("id", user_id)
+        .execute()
+    )
+    if conflict_result.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="This External ID is already assigned to another warehouse user.",
+        )
+
+    supabase_admin.table("warehouse_profiles").update({"external_id": ext_id}).eq("id", user_id).execute()
+
+    return AssignWarehouseExternalIdResponse(
+        id=user_id,
+        external_id=ext_id,
+        display_external_id=ext_id,
+    )
+
+
+def _generate_temporary_password() -> str:
+    """Generate a secure temporary password (min 12 chars, guaranteed character variety)."""
+    special = "!@#$%^&*"
+    alphabet = string.ascii_letters + string.digits + special
+    while True:
+        pwd = "".join(secrets.choice(alphabet) for _ in range(16))
+        if (
+            any(c.isupper() for c in pwd)
+            and any(c.islower() for c in pwd)
+            and any(c.isdigit() for c in pwd)
+            and any(c in special for c in pwd)
+        ):
+            return pwd
+
+
+def create_warehouse_user(req: CreateWarehouseUserRequest) -> CreateWarehouseUserResponse:
+    email_str = str(req.email)
+    external_id = req.external_id.strip()
+
+    # Duplicate email check across app_users and warehouse_profiles
+    existing_app = (
+        supabase_admin.table("app_users")
+        .select("id")
+        .eq("email", email_str)
+        .execute()
+    )
+    if existing_app.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    existing_wh = (
+        supabase_admin.table("warehouse_profiles")
+        .select("id")
+        .eq("email", email_str)
+        .execute()
+    )
+    if existing_wh.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    # External ID uniqueness check
+    existing_ext = (
+        supabase_admin.table("warehouse_profiles")
+        .select("id")
+        .eq("external_id", external_id)
+        .execute()
+    )
+    if existing_ext.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail="This External ID is already assigned to another warehouse user.",
+        )
+
+    # Generate a secure temporary password — user must reset on first login
+    # TODO: in production, email this password and do not return it
+    temp_password = _generate_temporary_password()
+
+    # Create Supabase Auth user
+    try:
+        auth_response = supabase_admin.auth.admin.create_user(
+            {
+                "email": email_str,
+                "password": temp_password,
+                "email_confirm": True,
+            }
+        )
+    except Exception as exc:
+        error_msg = str(exc).lower()
+        if "already" in error_msg or "duplicate" in error_msg or "exists" in error_msg:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists.",
+            ) from exc
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Could not create auth user. The email may already be registered.",
+        ) from exc
+
+    auth_user_id = str(auth_response.user.id)
+    full_name = f"{req.first_name} {req.last_name}"
+
+    try:
+        supabase_admin.table("app_users").insert(
+            {
+                "auth_user_id": auth_user_id,
+                "email": email_str,
+                "full_name": full_name,
+                "role": "warehouse_staff",
+                "is_active": True,
+            }
+        ).execute()
+
+        wh_result = supabase_admin.table("warehouse_profiles").insert(
+            {
+                "auth_user_id": auth_user_id,
+                "full_name": full_name,
+                "email": email_str,
+                "phone": req.phone,
+                "city": req.city,
+                "external_id": external_id,
+                "status": "active",
+            }
+        ).execute()
+    except Exception as exc:
+        try:
+            supabase_admin.auth.admin.delete_user(auth_user_id)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create warehouse user profile. Please try again.",
+        ) from exc
+
+    profile = wh_result.data[0]
+
+    return CreateWarehouseUserResponse(
+        id=str(profile["id"]),
+        auth_user_id=auth_user_id,
+        full_name=full_name,
+        email=email_str,
+        phone=req.phone,
+        city=req.city,
+        external_id=external_id,
+        role="warehouse_staff",
+        status="active",
+        status_label="Active",
+        status_color="green",
+        temporary_password=temp_password,
     )
