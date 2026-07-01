@@ -184,8 +184,11 @@ export default function LoginScreen() {
         router.replace("/admin" as any);
       } else {
         sessionStore.setDriver(response);
-        // Driver routing placeholder — driver dashboard not yet implemented
-        console.log("Driver login success:", response.email);
+        if (response.must_change_password) {
+          router.replace("/create-new-password" as any);
+        } else if (response.status === "approved") {
+          router.replace("/driver" as any);
+        }
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Login failed. Please try again.");

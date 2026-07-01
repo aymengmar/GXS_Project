@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status as http_status
 
 from app.db.supabase import supabase_admin
+from app.services.email_service import send_welcome_email
 from app.schemas.admin import (
     AssignExternalDriverIdResponse,
     AssignWarehouseExternalIdResponse,
@@ -273,7 +274,7 @@ def change_driver_status(driver_id: str, requested_status: str) -> ChangeDriverS
 
     profile_result = (
         supabase_admin.table("driver_profiles")
-        .select("id, external_driver_id")
+        .select("id, auth_user_id, status, full_name, email, external_driver_id")
         .eq("id", driver_id)
         .execute()
     )
@@ -288,10 +289,20 @@ def change_driver_status(driver_id: str, requested_status: str) -> ChangeDriverS
             detail="Assign External Driver ID before changing status.",
         )
 
+    old_status = profile.get("status") or ""
     db_status = _REQUEST_TO_DB_STATUS[requested_status]
+
     supabase_admin.table("driver_profiles").update(
         {"status": db_status, "updated_at": datetime.now(timezone.utc).isoformat()}
     ).eq("id", driver_id).execute()
+
+    if old_status in ("pending", "rejected") and db_status == "approved":
+        _send_driver_welcome(
+            auth_user_id=str(profile["auth_user_id"]),
+            driver_email=profile.get("email") or "",
+            full_name=profile.get("full_name") or "",
+            external_driver_id=ext_id,
+        )
 
     return ChangeDriverStatusResponse(
         id=driver_id,
@@ -299,6 +310,114 @@ def change_driver_status(driver_id: str, requested_status: str) -> ChangeDriverS
         status_label=_STATUS_LABEL.get(db_status, db_status),
         status_color=_STATUS_COLOR.get(db_status, "gray"),
     )
+
+
+def _ensure_app_user(
+    *,
+    auth_user_id: str,
+    email: str,
+    full_name: str,
+    role: str = "driver",
+) -> None:
+    """Guarantee an app_users row exists for this auth user, creating it if missing.
+
+    Self-registered drivers (see register_driver in auth_service.py) only get a
+    driver_profiles row at signup — app_users must be backfilled here on first
+    admin approval so login (which resolves role via app_users) doesn't 403.
+    """
+    existing = (
+        supabase_admin.table("app_users")
+        .select("auth_user_id")
+        .eq("auth_user_id", auth_user_id)
+        .execute()
+    )
+    if existing.data:
+        return
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        supabase_admin.table("app_users").insert(
+            {
+                "auth_user_id": auth_user_id,
+                "email": email,
+                "full_name": full_name,
+                "role": role,
+                "is_active": True,
+                "must_change_password": False,
+                "created_at": now_iso,
+                "updated_at": now_iso,
+            }
+        ).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Driver status updated but the account profile (app_users) could not be "
+                "created. The welcome email was not sent — retry activation before "
+                "contacting the driver."
+            ),
+        ) from exc
+
+
+def _send_driver_welcome(
+    *,
+    auth_user_id: str,
+    driver_email: str,
+    full_name: str,
+    external_driver_id: str,
+) -> None:
+    """Ensure app_users exists, generate a temp password, update Auth + app_users, send welcome email."""
+    _ensure_app_user(auth_user_id=auth_user_id, email=driver_email, full_name=full_name)
+
+    temp_password = _generate_temporary_password()
+
+    try:
+        supabase_admin.auth.admin.update_user_by_id(
+            auth_user_id,
+            {"password": temp_password},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Driver status updated but temporary password could not be set. Contact support.",
+        ) from exc
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        supabase_admin.table("app_users").update(
+            {
+                "must_change_password": True,
+                "last_temp_password_generated_at": now_iso,
+            }
+        ).eq("auth_user_id", auth_user_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Driver status updated but account flags could not be set. Contact support.",
+        ) from exc
+
+    try:
+        send_welcome_email(
+            to_email=driver_email,
+            full_name=full_name,
+            external_driver_id=external_driver_id,
+            temp_password=temp_password,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Driver status updated and password set, but the welcome email could not be "
+                "delivered. Please contact the driver directly to provide login credentials."
+            ),
+        ) from exc
+
+    try:
+        supabase_admin.table("app_users").update(
+            {"welcome_email_sent_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("auth_user_id", auth_user_id).execute()
+    except Exception:
+        pass
 
 
 _DOC_TITLE: dict[str, str] = {
@@ -584,15 +703,7 @@ def create_driver(req: CreateDriverRequest) -> CreateDriverResponse:
     full_name = f"{req.first_name} {req.last_name}"
 
     try:
-        supabase_admin.table("app_users").insert(
-            {
-                "auth_user_id": auth_user_id,
-                "email": str(req.email),
-                "full_name": full_name,
-                "role": "driver",
-                "is_active": True,
-            }
-        ).execute()
+        _ensure_app_user(auth_user_id=auth_user_id, email=str(req.email), full_name=full_name)
 
         profile_result = supabase_admin.table("driver_profiles").insert(
             {
@@ -617,6 +728,16 @@ def create_driver(req: CreateDriverRequest) -> CreateDriverResponse:
         ) from exc
 
     profile = profile_result.data[0]
+
+    # Driver is created directly as "approved" here, so the welcome email (with a
+    # freshly generated temp password) must be sent now — there is no later
+    # pending -> approved transition to trigger it via change_driver_status.
+    _send_driver_welcome(
+        auth_user_id=auth_user_id,
+        driver_email=str(req.email),
+        full_name=full_name,
+        external_driver_id=req.external_driver_id,
+    )
 
     ext_id = req.external_driver_id or None
     return CreateDriverResponse(
@@ -879,11 +1000,11 @@ def assign_warehouse_external_id(user_id: str, external_id: str) -> AssignWareho
 
 
 def _generate_temporary_password() -> str:
-    """Generate a secure temporary password (min 12 chars, guaranteed character variety)."""
+    """Generate a secure temporary password (8 chars, guaranteed character variety)."""
     special = "!@#$%^&*"
     alphabet = string.ascii_letters + string.digits + special
     while True:
-        pwd = "".join(secrets.choice(alphabet) for _ in range(16))
+        pwd = "".join(secrets.choice(alphabet) for _ in range(8))
         if (
             any(c.isupper() for c in pwd)
             and any(c.islower() for c in pwd)

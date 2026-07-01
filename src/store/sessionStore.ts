@@ -16,6 +16,7 @@ type DriverSession = {
   car_type: string;
   status: string;
   external_driver_id: string | null;
+  must_change_password: boolean;
 };
 
 export type AppSession = AdminSession | DriverSession;
@@ -41,6 +42,7 @@ export const sessionStore = {
       car_type: response.car_type,
       status: response.status,
       external_driver_id: response.external_driver_id,
+      must_change_password: response.must_change_password ?? false,
     };
   },
   get(): AppSession | null {

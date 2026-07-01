@@ -13,6 +13,7 @@ from app.db.supabase import supabase_admin, supabase_auth
 from app.schemas.auth import (
     AdminLoginResponse,
     AdminUserInfo,
+    ChangePasswordResponse,
     DriverLoginRequest,
     DriverLoginResponse,
     DriverRegisterRequest,
@@ -113,7 +114,11 @@ def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
     )
 
 
-def _complete_driver_login(auth_user_id: str, access_token: str) -> DriverLoginResponse:
+def _complete_driver_login(
+    auth_user_id: str,
+    access_token: str,
+    must_change_password: bool = False,
+) -> DriverLoginResponse:
     """Load and validate the driver profile after successful Supabase Auth sign-in."""
     result = (
         supabase_admin.table("driver_profiles")
@@ -158,6 +163,7 @@ def _complete_driver_login(auth_user_id: str, access_token: str) -> DriverLoginR
         car_type=profile["car_type"],
         status=driver_status,
         external_driver_id=profile.get("external_driver_id"),
+        must_change_password=must_change_password,
     )
 
 
@@ -211,7 +217,7 @@ def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginR
     # Resolve role via the central app_users registry (service-role only — never exposed to mobile).
     app_user_result = (
         supabase_admin.table("app_users")
-        .select("auth_user_id, email, full_name, role, is_active")
+        .select("auth_user_id, email, full_name, role, is_active, must_change_password")
         .eq("auth_user_id", auth_user_id)
         .execute()
     )
@@ -231,6 +237,7 @@ def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginR
         )
 
     role = app_user["role"]
+    must_change_pw = bool(app_user.get("must_change_password", False))
 
     if role == "admin":
         return AdminLoginResponse(
@@ -247,12 +254,55 @@ def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginR
         )
 
     if role == "driver":
-        return _complete_driver_login(auth_user_id, access_token)
+        return _complete_driver_login(auth_user_id, access_token, must_change_pw)
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=f"Login not yet supported for role: {role}.",
     )
+
+
+def change_password(access_token: str, new_password: str) -> ChangePasswordResponse:
+    """Update the logged-in user's password and clear must_change_password."""
+    # Validate the session token and identify the caller — never log new_password.
+    try:
+        user_response = supabase_admin.auth.get_user(access_token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session.",
+        ) from exc
+
+    if user_response.user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session.",
+        )
+
+    auth_user_id = str(user_response.user.id)
+
+    try:
+        supabase_admin.auth.admin.update_user_by_id(
+            auth_user_id,
+            {"password": new_password},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update password. Please try again.",
+        ) from exc
+
+    try:
+        supabase_admin.table("app_users").update(
+            {"must_change_password": False}
+        ).eq("auth_user_id", auth_user_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password updated but failed to clear password-change flag.",
+        ) from exc
+
+    return ChangePasswordResponse(message="Password updated successfully.")
 
 
 def _send_otp_email(to_email: str, otp: str) -> None:

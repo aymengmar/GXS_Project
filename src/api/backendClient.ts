@@ -182,6 +182,7 @@ export type DriverLoginResponse = {
   car_type: string;
   status: string;
   external_driver_id: string | null;
+  must_change_password: boolean;
 };
 
 export type LoginResponse = AdminLoginResponse | DriverLoginResponse;
@@ -697,4 +698,25 @@ export async function fetchAdminDashboardSummary(
     throw new Error(extractErrorMessage(data, "Failed to load dashboard summary."));
   }
   return data as AdminDashboardSummary;
+}
+
+// ── Change Password ───────────────────────────────────────────────────────────
+
+export async function changePassword(
+  accessToken: string,
+  newPassword: string,
+): Promise<{ message: string }> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/auth/change-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to update password. Please try again."));
+  }
+  return data as { message: string };
 }

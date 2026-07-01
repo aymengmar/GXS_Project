@@ -1,7 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request, status
 
 from app.schemas.auth import (
     AdminLoginResponse,
+    ChangePasswordRequest,
+    ChangePasswordResponse,
     DriverLoginRequest,
     DriverLoginResponse,
     DriverRegisterRequest,
@@ -11,7 +13,13 @@ from app.schemas.auth import (
     EmailVerificationVerifyRequest,
     EmailVerificationVerifyResponse,
 )
-from app.services.auth_service import login_user, register_driver, send_email_verification_code, verify_email_otp
+from app.services.auth_service import (
+    change_password,
+    login_user,
+    register_driver,
+    send_email_verification_code,
+    verify_email_otp,
+)
 
 router = APIRouter()
 
@@ -24,6 +32,18 @@ def register(payload: DriverRegisterRequest) -> DriverRegisterResponse:
 @router.post("/login")
 def login(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse:
     return login_user(payload)
+
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+def change_password_endpoint(payload: ChangePasswordRequest, request: Request) -> ChangePasswordResponse:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header.",
+        )
+    access_token = auth_header[7:]
+    return change_password(access_token, payload.new_password)
 
 
 @router.post("/email-verification/send-code", response_model=EmailVerificationSendResponse)

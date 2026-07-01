@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     EMAIL_FROM: str = "noreply@gxsdelivery.app"
+    APP_LOGIN_URL: str = "https://gxsdelivery.app/login"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

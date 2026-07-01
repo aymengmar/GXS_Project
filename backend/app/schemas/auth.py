@@ -58,6 +58,22 @@ class DriverLoginResponse(BaseModel):
     car_type: str
     status: str
     external_driver_id: str | None
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 12:
+            raise ValueError("Password must be at least 12 characters.")
+        return v
+
+
+class ChangePasswordResponse(BaseModel):
+    message: str
 
 
 class EmailVerificationSendRequest(BaseModel):
