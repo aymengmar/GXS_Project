@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DocumentUploadOptionsSheet from "@/components/DocumentUploadOptionsSheet";
 import PhotoPreviewModal from "@/components/PhotoPreviewModal";
+import { AllDocuments, DocKey, registrationStore } from "@/store/registrationStore";
 
 const BG = "#080D1A";
 const ORANGE = "#FF6500";
@@ -368,6 +369,90 @@ function SendIcon() {
           borderLeftColor: "#fff",
         }}
       />
+    </View>
+  );
+}
+
+function PersonIcon({ color = "rgba(255,255,255,0.55)" }: { color?: string }) {
+  return (
+    <View style={{ width: 20, height: 22 }}>
+      {/* head */}
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 5,
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+          borderWidth: 1.5,
+          borderColor: color,
+        }}
+      />
+      {/* shoulders */}
+      <View
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 10,
+          borderTopLeftRadius: 8,
+          borderTopRightRadius: 8,
+          borderTopWidth: 1.5,
+          borderLeftWidth: 1.5,
+          borderRightWidth: 1.5,
+          borderColor: color,
+        }}
+      />
+    </View>
+  );
+}
+
+function PassportIcon({ color = "rgba(255,255,255,0.55)" }: { color?: string }) {
+  return (
+    <View style={{ width: 18, height: 22 }}>
+      {/* page */}
+      <View
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          borderWidth: 1.5,
+          borderRadius: 3,
+          borderColor: color,
+        }}
+      />
+      {/* circle (biometric symbol) */}
+      <View
+        style={{
+          position: "absolute",
+          top: 4,
+          left: 4,
+          width: 10,
+          height: 10,
+          borderRadius: 5,
+          borderWidth: 1.5,
+          borderColor: color,
+        }}
+      />
+      {/* lines at bottom */}
+      {[16, 19].map((top) => (
+        <View
+          key={top}
+          style={{
+            position: "absolute",
+            top,
+            left: 3,
+            right: 3,
+            height: 1.5,
+            backgroundColor: color,
+            borderRadius: 1,
+          }}
+        />
+      ))}
     </View>
   );
 }
@@ -799,6 +884,15 @@ const dr = StyleSheet.create({
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
+const DOC_KEY_MAP: Record<string, DocKey> = {
+  "Driver photo": "driver_photo",
+  "Driver ID or Passport": "identity_document",
+  "Driving licence": "driving_licence",
+  "Health insurance": "health_insurance",
+  "IBAN / Bank account": "iban_bank_account",
+  "Home registration": "home_registration",
+};
+
 type Props = {
   isOwnCar?: boolean;
 };
@@ -813,6 +907,16 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
     source: "camera" | "gallery";
     fileSize?: number;
   } | null>(null);
+
+  const REQUIRED_DOCS = [
+    "Driver photo",
+    "Driver ID or Passport",
+    "Driving licence",
+    "Health insurance",
+    "IBAN / Bank account",
+    "Home registration",
+  ];
+  const allUploaded = REQUIRED_DOCS.every((doc) => !!uploads[doc]);
 
   const [cameraPermission, requestCameraPermission] = ImagePicker.useCameraPermissions();
 
@@ -838,6 +942,23 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
   }
 
   const stepLabel = "Step 2 of 3 — Required documents";
+
+  function handleContinue() {
+    const docs: Partial<AllDocuments> = {};
+    for (const [docName, entry] of Object.entries(uploads)) {
+      const key = DOC_KEY_MAP[docName];
+      if (key) {
+        docs[key] = {
+          uri: entry.uri,
+          name: entry.type === "pdf" ? entry.name : (entry.uri.split("/").pop() ?? "photo.jpg"),
+          mimeType: entry.type === "pdf" ? "application/pdf" : "image/jpeg",
+          size: entry.size ?? 0,
+        };
+      }
+    }
+    registrationStore.setDocuments(docs as AllDocuments);
+    router.push("/register/review");
+  }
 
   function openSheet(documentName: string) {
     setSheetDoc(documentName);
@@ -979,6 +1100,20 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
           {/* ── Document list ────────────────────────────────────── */}
           <View style={s.docList}>
             <DocumentRow
+              icon={<PersonIcon />}
+              title="Driver photo"
+              subtitle="Clear face photo — no PDF"
+              onUpload={() => openSheet("Driver photo")}
+              upload={uploads["Driver photo"]}
+            />
+            <DocumentRow
+              icon={<PassportIcon />}
+              title="Driver ID or Passport"
+              subtitle="Upload a clear photo or PDF"
+              onUpload={() => openSheet("Driver ID or Passport")}
+              upload={uploads["Driver ID or Passport"]}
+            />
+            <DocumentRow
               icon={<IDCardIcon />}
               title="Driving licence"
               subtitle="Upload a clear photo or scan"
@@ -1008,13 +1143,14 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
             />
           </View>
 
-          {/* ── Submit ───────────────────────────────────────────── */}
+          {/* ── Continue to review ───────────────────────────────── */}
           <Pressable
-            style={s.submitBtn}
-            onPress={() => router.push("/register/submitted")}
+            style={[s.submitBtn, !allUploaded && { opacity: 0.4 }]}
+            disabled={!allUploaded}
+            onPress={handleContinue}
           >
             <SendIcon />
-            <Text style={s.submitBtnText}>Submit registration</Text>
+            <Text style={s.submitBtnText}>Continue to review</Text>
           </Pressable>
         </ScrollView>
 
@@ -1040,6 +1176,7 @@ export default function UploadDocumentsScreen({ isOwnCar = false }: Props) {
         onTakePhoto={handleTakePhoto}
         onChooseFromGallery={handleChooseFromGallery}
         onUploadPdf={handleUploadPdf}
+        showPdf={sheetDoc !== "Driver photo"}
       />
 
       {previewPhoto && (
@@ -1105,6 +1242,13 @@ const s = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     marginBottom: 28,
+  },
+
+  errorText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 13,
+    color: "#FCA5A5",
+    lineHeight: 18,
   },
 
   submitBtn: {

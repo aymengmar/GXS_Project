@@ -1,7 +1,9 @@
+import { isAdminLoginResponse, loginUser } from "@/api/backendClient";
 import { images } from "@/constants/images";
-import { useRouter } from "expo-router";
+import { sessionStore } from "@/store/sessionStore";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ImageBackground,
   KeyboardAvoidingView,
@@ -151,14 +153,48 @@ const ic = StyleSheet.create({
 
 export default function LoginScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ registered?: string }>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loginPressed, setLoginPressed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showRegisteredBanner, setShowRegisteredBanner] = useState(
+    params.registered === "1",
+  );
+
+  useEffect(() => {
+    if (!showRegisteredBanner) return;
+    const t = setTimeout(() => setShowRegisteredBanner(false), 5000);
+    return () => clearTimeout(t);
+  }, [showRegisteredBanner]);
 
   const handleLogin = async () => {
-    // TODO: Implement Supabase Auth sign-in logic
-    console.log("Login attempt:", { email });
+    if (!email.trim() || !password) {
+      setErrorMsg("Please enter your email and password.");
+      return;
+    }
+    setErrorMsg(null);
+    setLoading(true);
+    try {
+      const response = await loginUser(email.trim(), password);
+      if (isAdminLoginResponse(response)) {
+        sessionStore.setAdmin(response);
+        router.replace("/admin" as any);
+      } else {
+        sessionStore.setDriver(response);
+        if (response.must_change_password) {
+          router.replace("/create-new-password" as any);
+        } else if (response.status === "approved") {
+          router.replace("/driver" as any);
+        }
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Login failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -203,6 +239,34 @@ export default function LoginScreen() {
                   Internal Delivery Management{"\n"}Hamburg, Germany
                 </Text>
               </View>
+
+              {/* ── Registered success banner ──────────────────────── */}
+              {showRegisteredBanner && (
+                <View style={styles.registeredBanner}>
+                  <View style={styles.registeredCheck}>
+                    <View style={styles.checkLong} />
+                    <View style={styles.checkShort} />
+                  </View>
+                  <Text style={styles.registeredBannerText}>
+                    Account created! You can now log in.
+                  </Text>
+                  <Pressable
+                    onPress={() => setShowRegisteredBanner(false)}
+                    hitSlop={10}
+                    style={styles.registeredClose}
+                  >
+                    <View style={styles.closeX1} />
+                    <View style={styles.closeX2} />
+                  </Pressable>
+                </View>
+              )}
+
+              {/* ── Error banner ───────────────────────────────────── */}
+              {errorMsg && (
+                <View style={styles.errorBanner}>
+                  <Text style={styles.errorBannerText}>{errorMsg}</Text>
+                </View>
+              )}
 
               {/* ── Form ───────────────────────────────────────────── */}
               <View style={styles.form}>
@@ -257,13 +321,16 @@ export default function LoginScreen() {
                 <Pressable
                   style={[
                     styles.loginBtn,
-                    loginPressed && styles.loginBtnPressed,
+                    (loginPressed || loading) && styles.loginBtnPressed,
                   ]}
                   onPressIn={() => setLoginPressed(true)}
                   onPressOut={() => setLoginPressed(false)}
                   onPress={handleLogin}
+                  disabled={loading}
                 >
-                  <Text style={styles.loginBtnText}>Login</Text>
+                  <Text style={styles.loginBtnText}>
+                    {loading ? "Logging in…" : "Login"}
+                  </Text>
                 </Pressable>
 
                 {/* Register link */}
@@ -400,5 +467,93 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingTop: 36,
     paddingBottom: 12,
+  },
+
+  errorBanner: {
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.40)",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  errorBannerText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: "#FCA5A5",
+    lineHeight: 18,
+  },
+
+  registeredBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(34,197,94,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.40)",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 20,
+    gap: 10,
+  },
+  registeredCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(34,197,94,0.22)",
+    borderWidth: 1.5,
+    borderColor: "rgba(34,197,94,0.70)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    position: "relative",
+  },
+  checkLong: {
+    position: "absolute",
+    width: 10,
+    height: 2.5,
+    backgroundColor: "#22C55E",
+    borderRadius: 1.5,
+    transform: [{ rotate: "-45deg" }, { translateX: -1 }, { translateY: 2 }],
+  },
+  checkShort: {
+    position: "absolute",
+    width: 5,
+    height: 2.5,
+    backgroundColor: "#22C55E",
+    borderRadius: 1.5,
+    transform: [{ rotate: "45deg" }, { translateX: -1 }, { translateY: 5 }],
+  },
+  registeredBannerText: {
+    flex: 1,
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: "#86EFAC",
+    lineHeight: 18,
+  },
+  registeredClose: {
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    position: "relative",
+  },
+  closeX1: {
+    position: "absolute",
+    width: 13,
+    height: 1.8,
+    backgroundColor: "rgba(134,239,172,0.70)",
+    borderRadius: 1,
+    transform: [{ rotate: "45deg" }],
+  },
+  closeX2: {
+    position: "absolute",
+    width: 13,
+    height: 1.8,
+    backgroundColor: "rgba(134,239,172,0.70)",
+    borderRadius: 1,
+    transform: [{ rotate: "-45deg" }],
   },
 });
