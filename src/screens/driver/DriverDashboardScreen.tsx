@@ -1,10 +1,19 @@
+import {
+  DriverDashboardResponse,
+  fetchDriverDashboard,
+} from "@/api/backendClient";
 import type { DriverTab } from "@/components/driver/DriverBottomTabs";
 import { images } from "@/constants/images";
 import { sessionStore } from "@/store/sessionStore";
+import { formatDaysLeftLabel, formatExpiryDate } from "@/utils/insuranceExpiry";
 import { StatusBar } from "expo-status-bar";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
+  Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -28,32 +37,38 @@ const WHITE = "#FFFFFF";
 const DIM = "rgba(255,255,255,0.60)";
 const MUTED = "rgba(255,255,255,0.30)";
 
-// ─── mock data ─────────────────────────────────────────────────────────────────
-const MOCK = {
-  name: "John Doe",
-  externalId: "DRV-001",
-  status: "Active",
-  carType: "Own Car Driver",
-  phone: "+49 123 456 7890",
-  email: "john.doe@email.com",
-  warehouse: "Hamburg Main Warehouse",
-  city: "Hamburg, Germany",
-  docs: { total: 12, approved: 8, pending: 3, rejected: 1 },
-  assignment: {
-    status: "Assigned",
-    warehouse: "Hamburg Main Warehouse",
-    startTime: "08:30 AM",
-    date: "May 20, 2025",
-  },
-  vehicle: {
-    name: "Toyota Corolla",
-    plate: "B-AH-2026",
-    insurance: "Allianz",
-  },
-  stats: {
-    delivered: "128",
-    returned: "7",
-  },
+// ─── status colors ────────────────────────────────────────────────────────────
+// Maps the driver's account status to the color used for the avatar ring and
+// status badge, so both stay in sync with the real status from the backend.
+const STATUS_STYLES: Record<string, { color: string; bg: string }> = {
+  approved: { color: GREEN, bg: "rgba(34,197,94,0.15)" },
+  pending: { color: AMBER, bg: "rgba(245,158,11,0.15)" },
+  rejected: { color: RED, bg: "rgba(239,68,68,0.15)" },
+};
+const DEFAULT_STATUS_STYLE = { color: AMBER, bg: "rgba(245,158,11,0.15)" };
+
+const EXPIRY_STATUS_COLOR: Record<string, string> = {
+  valid: GREEN,
+  expiring_soon: AMBER,
+  expired: RED,
+  missing: MUTED,
+};
+
+// ─── stats placeholder ──────────────────────────────────────────────────────
+// Delivered/returned packet counts come from the external scanning app and are
+// not part of the driver dashboard endpoint yet — kept static until wired up.
+const STATS = {
+  delivered: "128",
+  returned: "7",
+};
+
+// Company car invoice counts also come from a feature not built yet — kept
+// static until the invoices backend/endpoint exists.
+const INVOICE_STATS = {
+  total: "24",
+  pending: "8",
+  approved: "12",
+  rejected: "4",
 };
 
 // ─── SVG icons ─────────────────────────────────────────────────────────────────
@@ -251,6 +266,25 @@ function DocStatBox({
   );
 }
 
+// ─── InvoiceMetricBox ──────────────────────────────────────────────────────────
+function InvoiceMetricBox({
+  icon,
+  value,
+  label,
+}: {
+  icon: React.ReactNode;
+  value: string;
+  label: string;
+}) {
+  return (
+    <View style={styles.invoiceMetricBox}>
+      {icon}
+      <Text style={styles.invoiceMetricValue}>{value}</Text>
+      <Text style={styles.invoiceMetricLabel}>{label}</Text>
+    </View>
+  );
+}
+
 // ─── StatPreviewBox ────────────────────────────────────────────────────────────
 function StatPreviewBox({
   icon,
@@ -288,11 +322,119 @@ interface Props {
 // ─── main component ────────────────────────────────────────────────────────────
 export default function DriverDashboardScreen({ onNavigate }: Props) {
   const session = sessionStore.get();
+
+  const [dashboard, setDashboard] = useState<DriverDashboardResponse | null>(null);
+  const [loading, setLoading] = useState(session?.kind === "driver");
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    const s = sessionStore.get();
+    if (s?.kind !== "driver") return;
+    fetchDriverDashboard(s.access_token)
+      .then((data) => {
+        setDashboard(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setFetchErr(String(err?.message ?? "Failed to load dashboard."));
+        setLoading(false);
+      });
+  }, []);
+
+  const driver = dashboard?.driver ?? null;
+  const warehouse = dashboard?.warehouse ?? null;
+  const docs = dashboard?.documents_summary ?? null;
+  const assignment = dashboard?.today_assignment ?? null;
+
   const driverName =
-    session?.kind === "driver" ? session.full_name : MOCK.name;
+    driver?.full_name || (session?.kind === "driver" ? session.full_name : "Driver");
+  const externalId = driver?.external_driver_id || "Not assigned yet";
+  const statusLabel = driver?.status_label || "Pending";
+  const statusStyle =
+    (driver?.status && STATUS_STYLES[driver.status]) || DEFAULT_STATUS_STYLE;
+  const driverTypeLabel = driver?.driver_type_label || "";
+  const phone = driver?.phone || "Not provided";
+  const email = driver?.email || "";
+  const warehouseName = warehouse?.name || "Not assigned yet";
+  const warehouseCity = warehouse?.city || "Not assigned yet";
+  const avatarSource = driver?.profile_image_url
+    ? { uri: driver.profile_image_url }
+    : require("@/assets/images/avatars/driver1.jpg");
+
+  const docTotal = docs?.total ?? 0;
+  const docApproved = docs?.approved ?? 0;
+  const docPending = docs?.pending ?? 0;
+  const docRejected = docs?.rejected ?? 0;
+
+  const hasAssignment = assignment?.status && assignment.status !== "not_assigned";
+
+  const insuranceExpiryStatus = dashboard?.own_car_details?.insurance_expiry_status ?? "missing";
+  const insuranceExpiryColor = EXPIRY_STATUS_COLOR[insuranceExpiryStatus] ?? MUTED;
+  const insuranceExpiryValue =
+    insuranceExpiryStatus === "missing"
+      ? "Not set"
+      : insuranceExpiryStatus === "expired"
+        ? "Expired"
+        : dashboard?.own_car_details?.insurance_expiry_date
+          ? formatExpiryDate(dashboard.own_car_details.insurance_expiry_date)
+          : "Not set";
+  const insuranceExpiryDaysLabel =
+    insuranceExpiryStatus === "valid" || insuranceExpiryStatus === "expiring_soon"
+      ? formatDaysLeftLabel(insuranceExpiryStatus, dashboard?.own_car_details?.insurance_days_until_expiry ?? null)
+      : "";
 
   function handleCopyId() {
-    Alert.alert("Copied", `Driver ID: ${MOCK.externalId}`);
+    Alert.alert("Copied", `Driver ID: ${externalId}`);
+  }
+
+  function handleCallWarehouse() {
+    Alert.alert(
+      "Call Warehouse?",
+      "Do you want to call +49 123 456 7890?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call",
+          onPress: () => {
+            Linking.openURL("tel:+491234567890").catch(() => {
+              Alert.alert("Unable to open phone app.");
+            });
+          },
+        },
+      ]
+    );
+  }
+
+  function handleOpenWarehouseLocation() {
+    Alert.alert(
+      "Open Warehouse Location?",
+      "Do you want to open Hamburg in Maps?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Open Maps",
+          onPress: () => {
+            const url =
+              Platform.OS === "ios"
+                ? "maps://?q=Hamburg"
+                : Platform.OS === "android"
+                ? "geo:0,0?q=Hamburg"
+                : "https://www.google.com/maps/search/?api=1&query=Hamburg";
+            const fallbackUrl =
+              "https://www.google.com/maps/search/?api=1&query=Hamburg";
+            Linking.canOpenURL(url)
+              .then((supported) => {
+                Linking.openURL(supported ? url : fallbackUrl).catch(() => {
+                  Alert.alert("Unable to open maps.");
+                });
+              })
+              .catch(() => {
+                Alert.alert("Unable to open maps.");
+              });
+          },
+        },
+      ]
+    );
   }
 
   return (
@@ -321,24 +463,41 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
             </View>
           </View>
 
+          {/* ── error banner ────────────────────────────────────────────────── */}
+          {fetchErr && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{fetchErr}</Text>
+            </View>
+          )}
+
+          {loading ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="large" color={ORANGE} />
+            </View>
+          ) : (
+          <>
           {/* ── Driver Identity Card ─────────────────────────────────────────── */}
           <View style={styles.card}>
             <View style={styles.identityRow}>
-              {/* Avatar with orange ring */}
-              <View style={styles.avatarRing}>
-                <Image
-                  source={require("@/assets/images/avatars/driver1.jpg")}
-                  style={styles.avatar}
+              {/* Avatar with status-colored ring */}
+              <View
+                style={[styles.avatarRing, { borderColor: statusStyle.color }]}
+              >
+                <Image source={avatarSource} style={styles.avatar} />
+                <View
+                  style={[
+                    styles.onlineDot,
+                    { backgroundColor: statusStyle.color },
+                  ]}
                 />
-                <View style={styles.onlineDot} />
               </View>
 
               {/* Name + ID */}
               <View style={styles.identityCenter}>
-                <Text style={styles.identityName}>{MOCK.name}</Text>
+                <Text style={styles.identityName}>{driverName}</Text>
                 <Text style={styles.idLabel}>External Driver ID</Text>
                 <View style={styles.idRow}>
-                  <Text style={styles.idValue}>{MOCK.externalId}</Text>
+                  <Text style={styles.idValue}>{externalId}</Text>
                   <Pressable onPress={handleCopyId} hitSlop={8}>
                     <CopyIcon size={14} color={MUTED} />
                   </Pressable>
@@ -347,15 +506,32 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
 
               {/* Active badge + car type */}
               <View style={styles.identityRight}>
-                <View style={styles.activeBadge}>
-                  <View style={[styles.statusDot, { backgroundColor: GREEN }]} />
-                  <Text style={styles.activeBadgeText}>Active</Text>
+                <View
+                  style={[
+                    styles.activeBadge,
+                    { backgroundColor: statusStyle.bg },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      { backgroundColor: statusStyle.color },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.activeBadgeText,
+                      { color: statusStyle.color },
+                    ]}
+                  >
+                    {statusLabel}
+                  </Text>
                 </View>
                 <View style={styles.carTypeBox}>
                   <View style={styles.carIconCircle}>
                     <CarIcon size={18} color={WHITE} />
                   </View>
-                  <Text style={styles.carTypeText}>Own Car Driver</Text>
+                  <Text style={styles.carTypeText}>{driverTypeLabel}</Text>
                 </View>
               </View>
             </View>
@@ -380,7 +556,7 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
             <View style={styles.statPreviewGrid}>
               <StatPreviewBox
                 icon={<PackageIcon size={22} color={GREEN} />}
-                value={MOCK.stats.delivered}
+                value={STATS.delivered}
                 label="Delivered Packets"
                 subtitle="Today"
                 trend="+12.6% vs yesterday"
@@ -388,7 +564,7 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
               />
               <StatPreviewBox
                 icon={<ReturnIcon size={22} color={RED} />}
-                value={MOCK.stats.returned}
+                value={STATS.returned}
                 label="Returned Packets"
                 subtitle="Today"
                 trend="-2.1% vs yesterday"
@@ -406,19 +582,19 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
             <View style={styles.contactGrid}>
               {/* Left column: phone + email */}
               <View style={styles.contactLeftCol}>
-                <View style={styles.contactItem}>
+                <Pressable style={styles.contactItem} onPress={handleCallWarehouse}>
                   <PhoneIcon size={14} color={ORANGE} />
                   <View style={styles.contactTextGroup}>
                     <Text style={styles.contactLabel}>Phone</Text>
-                    <Text style={styles.contactValue}>{MOCK.phone}</Text>
+                    <Text style={styles.contactValue}>{phone}</Text>
                   </View>
-                </View>
+                </Pressable>
                 <View style={styles.contactDivider} />
                 <View style={styles.contactItem}>
                   <MailIcon size={14} color={ORANGE} />
                   <View style={styles.contactTextGroup}>
                     <Text style={styles.contactLabel}>Email</Text>
-                    <Text style={styles.contactValue}>{MOCK.email}</Text>
+                    <Text style={styles.contactValue}>{email}</Text>
                   </View>
                 </View>
               </View>
@@ -427,12 +603,15 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
               <View style={styles.vertDivider} />
 
               {/* Right column: warehouse */}
-              <View style={styles.contactRightCol}>
+              <Pressable
+                style={styles.contactRightCol}
+                onPress={handleOpenWarehouseLocation}
+              >
                 <WarehouseIcon size={18} color={ORANGE} />
                 <Text style={styles.contactLabel}>Assigned Warehouse</Text>
-                <Text style={styles.warehouseName}>{MOCK.warehouse}</Text>
-                <Text style={styles.contactLabel}>{MOCK.city}</Text>
-              </View>
+                <Text style={styles.warehouseName}>{warehouseName}</Text>
+                <Text style={styles.contactLabel}>{warehouseCity}</Text>
+              </Pressable>
             </View>
           </View>
 
@@ -455,22 +634,22 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
             <View style={styles.docBoxRow}>
               <DocStatBox
                 icon={<DocIconBlue size={24} />}
-                count={MOCK.docs.total}
+                count={docTotal}
                 label="Total Documents"
               />
               <DocStatBox
                 icon={<CheckCircleIcon size={24} color={GREEN} />}
-                count={MOCK.docs.approved}
+                count={docApproved}
                 label="Approved"
               />
               <DocStatBox
                 icon={<ClockIcon size={24} color={AMBER} />}
-                count={MOCK.docs.pending}
+                count={docPending}
                 label="Pending"
               />
               <DocStatBox
                 icon={<XCircleIcon size={24} color={RED} />}
-                count={MOCK.docs.rejected}
+                count={docRejected}
                 label="Rejected"
               />
             </View>
@@ -483,41 +662,68 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
                 <CalendarIcon size={18} color={ORANGE} />
                 <Text style={styles.sectionTitle}>Today's Assignment</Text>
               </View>
-              <View style={styles.assignedBadge}>
-                <View style={[styles.statusDot, { backgroundColor: GREEN }]} />
-                <Text style={styles.assignedText}>Assigned</Text>
+              <View
+                style={[
+                  styles.assignedBadge,
+                  !hasAssignment && { backgroundColor: "rgba(255,255,255,0.08)" },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: hasAssignment ? GREEN : MUTED },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.assignedText,
+                    !hasAssignment && { color: MUTED },
+                  ]}
+                >
+                  {hasAssignment ? "Assigned" : "Not Assigned"}
+                </Text>
               </View>
             </View>
 
-            <View style={styles.assignmentContent}>
-              <View style={styles.assignmentLeft}>
-                <View style={styles.assignmentWarehouseRow}>
-                  <WarehouseIcon size={16} color={DIM} />
-                  <Text style={styles.assignmentWarehouseText}>
-                    {MOCK.assignment.warehouse}
-                  </Text>
-                </View>
-                <View style={styles.assignmentInfoRow}>
-                  <View style={styles.assignmentInfoItem}>
-                    <ClockIcon size={14} color={MUTED} />
-                    <View>
-                      <Text style={styles.infoLabel}>Start Time</Text>
-                      <Text style={styles.infoValue}>
-                        {MOCK.assignment.startTime}
-                      </Text>
+            {hasAssignment ? (
+              <View style={styles.assignmentContent}>
+                <View style={styles.assignmentLeft}>
+                  <View style={styles.assignmentWarehouseRow}>
+                    <WarehouseIcon size={16} color={DIM} />
+                    <Text style={styles.assignmentWarehouseText}>
+                      {assignment?.warehouse_name || "Not assigned yet"}
+                    </Text>
+                  </View>
+                  <View style={styles.assignmentInfoRow}>
+                    <View style={styles.assignmentInfoItem}>
+                      <ClockIcon size={14} color={MUTED} />
+                      <View>
+                        <Text style={styles.infoLabel}>Start Time</Text>
+                        <Text style={styles.infoValue}>
+                          {assignment?.start_time || "—"}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.assignmentInfoItem}>
+                      <CalendarIcon size={14} color={MUTED} />
+                      <View>
+                        <Text style={styles.infoLabel}>Date</Text>
+                        <Text style={styles.infoValue}>
+                          {assignment?.date || "—"}
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                  <View style={styles.assignmentInfoItem}>
-                    <CalendarIcon size={14} color={MUTED} />
-                    <View>
-                      <Text style={styles.infoLabel}>Date</Text>
-                      <Text style={styles.infoValue}>{MOCK.assignment.date}</Text>
-                    </View>
-                  </View>
                 </View>
+                <AssignmentIllustration />
               </View>
-              <AssignmentIllustration />
-            </View>
+            ) : (
+              <View style={styles.noAssignmentBox}>
+                <Text style={styles.noAssignmentText}>
+                  No assignment available yet
+                </Text>
+              </View>
+            )}
 
             <Pressable
               style={styles.orangeBtn}
@@ -528,48 +734,119 @@ export default function DriverDashboardScreen({ onNavigate }: Props) {
             </Pressable>
           </View>
 
-          {/* ── My Vehicle Card ──────────────────────────────────────────────── */}
+          {/* ── My Vehicle / Company Car Invoices Card ───────────────────────── */}
           <View style={styles.card}>
             <View style={styles.sectionHeaderRow}>
               <View style={styles.sectionHeader}>
-                <CarIcon size={20} color={ORANGE} />
-                <Text style={styles.sectionTitle}>My Vehicle</Text>
+                {driver?.car_type === "company_car" ? (
+                  <DocIconHeader size={18} color={ORANGE} />
+                ) : (
+                  <CarIcon size={20} color={ORANGE} />
+                )}
+                <Text style={styles.sectionTitle}>
+                  {driver?.car_type === "company_car"
+                    ? "Company Car Invoices"
+                    : "My Vehicle"}
+                </Text>
               </View>
               <Pressable
-                onPress={() => onNavigate("vehicle")}
+                onPress={() =>
+                  onNavigate(driver?.car_type === "company_car" ? "invoices" : "vehicle")
+                }
                 style={styles.linkBtn}
                 hitSlop={6}
               >
-                <Text style={styles.linkText}>View Vehicle</Text>
+                <Text style={styles.linkText}>
+                  {driver?.car_type === "company_car"
+                    ? "View my Invoices"
+                    : "View Vehicle"}
+                </Text>
                 <ChevronRight size={13} color={ORANGE} />
               </Pressable>
             </View>
 
-            <View style={styles.vehicleContent}>
-              <View style={styles.vehicleImageBox}>
-                <Image
-                  source={images.ownVehicle}
-                  style={styles.vehicleImage}
-                  resizeMode="cover"
+            {driver?.car_type === "company_car" ? (
+              <View style={styles.invoiceMetricRow}>
+                <InvoiceMetricBox
+                  icon={<DocIconBlue size={20} />}
+                  value={INVOICE_STATS.total}
+                  label="Total Invoices"
+                />
+                <InvoiceMetricBox
+                  icon={<ClockIcon size={20} color={AMBER} />}
+                  value={INVOICE_STATS.pending}
+                  label="Pending"
+                />
+                <InvoiceMetricBox
+                  icon={<CheckCircleIcon size={20} color={GREEN} />}
+                  value={INVOICE_STATS.approved}
+                  label="Approved"
+                />
+                <InvoiceMetricBox
+                  icon={<XCircleIcon size={20} color={RED} />}
+                  value={INVOICE_STATS.rejected}
+                  label="Rejected"
                 />
               </View>
-              <View style={styles.vehicleDetails}>
-                <Text style={styles.vehicleName}>{MOCK.vehicle.name}</Text>
-                <View style={styles.vehicleRow}>
-                  <View>
-                    <Text style={styles.vehicleLabel}>Plate Number</Text>
-                    <Text style={styles.vehicleValue}>{MOCK.vehicle.plate}</Text>
-                  </View>
-                  <View>
-                    <Text style={styles.vehicleLabel}>Insurance Provider</Text>
-                    <Text style={styles.vehicleValue}>{MOCK.vehicle.insurance}</Text>
-                  </View>
+            ) : (
+              <View style={styles.vehicleContent}>
+                <View style={styles.vehicleImageBox}>
+                  <Image
+                    source={images.ownVehicle}
+                    style={styles.vehicleImage}
+                    resizeMode="cover"
+                  />
+                </View>
+                <View style={styles.vehicleDetails}>
+                  {dashboard?.own_car_details ? (
+                    <>
+                      <Text style={styles.vehicleName}>
+                        {dashboard.own_car_details.vehicle_make_model ||
+                          "Own Vehicle"}
+                      </Text>
+                      <View style={styles.vehicleRow}>
+                        <View>
+                          <Text style={styles.vehicleLabel}>Plate Number</Text>
+                          <Text style={styles.vehicleValue}>
+                            {dashboard.own_car_details.plate_number ||
+                              "Not provided"}
+                          </Text>
+                        </View>
+                        <View>
+                          <Text style={styles.vehicleLabel}>
+                            Insurance Provider
+                          </Text>
+                          <Text style={styles.vehicleValue}>
+                            {dashboard.own_car_details.insurance_provider ||
+                              "Not provided"}
+                          </Text>
+                        </View>
+                        <View>
+                          <Text style={styles.vehicleLabel}>Insurance Expiry</Text>
+                          <Text style={[styles.vehicleValue, { color: insuranceExpiryColor }]}>
+                            {insuranceExpiryValue}
+                          </Text>
+                          {insuranceExpiryDaysLabel ? (
+                            <Text style={[styles.vehicleExpirySubtitle, { color: insuranceExpiryColor }]}>
+                              {insuranceExpiryDaysLabel}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={styles.vehicleCompanyDesc}>
+                      Vehicle details not completed yet.
+                    </Text>
+                  )}
                 </View>
               </View>
-            </View>
+            )}
           </View>
 
           <View style={{ height: 16 }} />
+          </>
+          )}
         </ScrollView>
       </SafeAreaView>
     </>
@@ -589,6 +866,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 8,
+  },
+
+  // ── Loading / error states
+  loadingBox: {
+    height: 300,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  errorBanner: {
+    backgroundColor: "rgba(239,68,68,0.15)",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.3)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  errorText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: RED,
+    lineHeight: 18,
   },
 
   // ── Header
@@ -656,22 +955,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    flexShrink: 1,
+    minWidth: 0,
   },
   sectionHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
     marginBottom: 14,
   },
   sectionTitle: {
     fontFamily: "Poppins_600SemiBold",
     fontSize: 15,
     color: WHITE,
+    flexShrink: 1,
   },
   linkBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
+    flexShrink: 0,
   },
   linkText: {
     fontFamily: "Poppins_500Medium",
@@ -864,6 +1167,35 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
 
+  // ── Company car invoice metrics
+  invoiceMetricRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  invoiceMetricBox: {
+    flex: 1,
+    backgroundColor: INNER,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BORDER,
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 3,
+    gap: 4,
+  },
+  invoiceMetricValue: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 14,
+    color: WHITE,
+    textAlign: "center",
+  },
+  invoiceMetricLabel: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 8.5,
+    color: MUTED,
+    textAlign: "center",
+  },
+
   // ── Statistics preview
   statPreviewGrid: {
     flexDirection: "row",
@@ -956,6 +1288,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: GREEN,
   },
+  noAssignmentBox: {
+    backgroundColor: INNER,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BORDER,
+    paddingVertical: 20,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  noAssignmentText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: MUTED,
+  },
   orangeBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1001,6 +1347,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: WHITE,
   },
+  vehicleCompanyDesc: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: MUTED,
+    lineHeight: 18,
+    marginTop: 4,
+  },
   vehicleRow: {
     flexDirection: "row",
     gap: 14,
@@ -1016,5 +1369,10 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_700Bold",
     fontSize: 13,
     color: WHITE,
+  },
+  vehicleExpirySubtitle: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 10,
+    marginTop: 1,
   },
 });

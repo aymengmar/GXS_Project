@@ -7,7 +7,8 @@ export type DriverTab =
   | "statistic"
   | "assignment"
   | "documents"
-  | "vehicle";
+  | "vehicle"
+  | "invoices";
 
 const BG = "#060C18";
 const ORANGE = "#FF6500";
@@ -133,7 +134,18 @@ function VehicleIcon({ color }: { color: string }) {
   );
 }
 
-const TABS: {
+function InvoiceIcon({ color }: { color: string }) {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+      <Rect x="4" y="2" width="16" height="20" rx="2" stroke={color} strokeWidth={1.8} />
+      <Line x1="7.5" y1="8" x2="16.5" y2="8" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+      <Line x1="7.5" y1="12.5" x2="16.5" y2="12.5" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+      <Line x1="7.5" y1="17" x2="12.5" y2="17" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+const BASE_TABS: {
   id: DriverTab;
   label: string;
   Icon: React.ComponentType<{ color: string }>;
@@ -142,21 +154,25 @@ const TABS: {
   { id: "statistic", label: "Statistic", Icon: StatisticIcon },
   { id: "assignment", label: "Assignment", Icon: AssignmentIcon },
   { id: "documents", label: "Documents", Icon: DocumentIcon },
-  { id: "vehicle", label: "Vehicle", Icon: VehicleIcon },
 ];
+
+const VEHICLE_TAB = { id: "vehicle" as const, label: "Vehicle", Icon: VehicleIcon };
+const INVOICES_TAB = { id: "invoices" as const, label: "Invoices", Icon: InvoiceIcon };
 
 interface Props {
   activeTab: DriverTab;
   onTabPress: (tab: DriverTab) => void;
+  carType: "own_car" | "company_car";
 }
 
-export default function DriverBottomTabs({ activeTab, onTabPress }: Props) {
+export default function DriverBottomTabs({ activeTab, onTabPress, carType }: Props) {
   const insets = useSafeAreaInsets();
+  const tabs = [...BASE_TABS, carType === "company_car" ? INVOICES_TAB : VEHICLE_TAB];
   return (
     <View
       style={[styles.container, { paddingBottom: Math.max(insets.bottom, 10) }]}
     >
-      {TABS.map(({ id, label, Icon }) => {
+      {tabs.map(({ id, label, Icon }) => {
         const active = activeTab === id;
         const color = active ? ORANGE : INACTIVE;
         return (

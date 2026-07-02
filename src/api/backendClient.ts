@@ -700,6 +700,304 @@ export async function fetchAdminDashboardSummary(
   return data as AdminDashboardSummary;
 }
 
+// ── Driver Dashboard ──────────────────────────────────────────────────────────
+
+export type DriverDashboardDriver = {
+  full_name: string;
+  email: string;
+  phone: string | null;
+  status: string;
+  status_label: string;
+  external_driver_id: string | null;
+  car_type: string;
+  driver_type_label: string;
+  postal_code: string | null;
+  profile_image_url: string | null;
+};
+
+export type DriverDashboardWarehouse = {
+  name: string | null;
+  city: string | null;
+  address: string | null;
+};
+
+export type DriverDashboardDocumentsSummary = {
+  total: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+};
+
+export type DriverDashboardAssignment = {
+  status: string;
+  warehouse_name: string | null;
+  start_time: string | null;
+  date: string | null;
+};
+
+export type InsuranceExpiryStatus = "missing" | "valid" | "expiring_soon" | "expired";
+
+export type DriverDashboardOwnCarDetails = {
+  id: string;
+  vehicle_make_model: string | null;
+  plate_number: string | null;
+  insurance_provider: string | null;
+  insurance_number: string | null;
+  vehicle_year: number | null;
+  insurance_expiry_date: string | null;
+  insurance_days_until_expiry: number | null;
+  insurance_expiry_status: InsuranceExpiryStatus;
+};
+
+export type DriverDashboardCompanyCar = {
+  title: string;
+  description: string;
+};
+
+export type DriverDashboardResponse = {
+  driver: DriverDashboardDriver;
+  warehouse: DriverDashboardWarehouse;
+  documents_summary: DriverDashboardDocumentsSummary;
+  today_assignment: DriverDashboardAssignment;
+  own_car_details: DriverDashboardOwnCarDetails | null;
+  company_car: DriverDashboardCompanyCar | null;
+};
+
+export async function fetchDriverDashboard(
+  accessToken: string,
+): Promise<DriverDashboardResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/driver/dashboard`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Failed to load dashboard."));
+  }
+  return data as DriverDashboardResponse;
+}
+
+// ── Driver Documents ──────────────────────────────────────────────────────────
+
+export type DriverDocumentListItem = {
+  id: string;
+  document_type: string;
+  title: string;
+  description: string;
+  review_status: "approved" | "pending" | "rejected" | "missing";
+  review_status_label: string;
+  review_status_color: string;
+  uploaded_at: string | null;
+  updated_at: string | null;
+  last_updated_label: string;
+  file_name: string | null;
+  mime_type: string | null;
+  signed_url: string | null;
+};
+
+export type DriverDocumentsListResponse = {
+  documents: DriverDocumentListItem[];
+  summary: DriverDashboardDocumentsSummary;
+};
+
+export async function fetchDriverDocuments(
+  accessToken: string,
+): Promise<DriverDocumentsListResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/driver/documents`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Could not load documents."));
+  }
+  return data as DriverDocumentsListResponse;
+}
+
+// ── Driver Vehicle ────────────────────────────────────────────────────────────
+
+export type DriverVehicleDriver = {
+  full_name: string;
+  status: string;
+  status_label: string;
+  car_type: string;
+  driver_type_label: string;
+  profile_image_url: string | null;
+};
+
+export type DriverVehicleVehicle = {
+  make_model: string | null;
+  plate_number: string | null;
+  vehicle_type: string;
+  vehicle_year: number | null;
+  registration_status: string;
+};
+
+export type DriverVehicleInsurance = {
+  provider: string | null;
+  insurance_number: string | null;
+  document_status: "approved" | "pending" | "rejected" | "not_uploaded";
+  document_status_label: string;
+  expiry_date: string | null;
+  days_until_expiry: number | null;
+  expiry_status: InsuranceExpiryStatus;
+  document_preview_url: string | null;
+  mime_type: string | null;
+};
+
+export type DriverVehicleResponse = {
+  driver: DriverVehicleDriver;
+  vehicle: DriverVehicleVehicle;
+  insurance: DriverVehicleInsurance;
+};
+
+export async function fetchDriverVehicle(
+  accessToken: string,
+): Promise<DriverVehicleResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/driver/vehicle`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Could not load vehicle information."));
+  }
+  return data as DriverVehicleResponse;
+}
+
+// ── Driver Insurance Expiry ────────────────────────────────────────────────────
+
+export type DriverInsuranceExpiryResponse = {
+  expiry_date: string | null;
+  days_until_expiry: number | null;
+  expiry_status: InsuranceExpiryStatus;
+};
+
+export async function updateDriverInsuranceExpiry(
+  accessToken: string,
+  insuranceExpiryDate: string,
+): Promise<DriverInsuranceExpiryResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/driver/vehicle/insurance-expiry`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ insurance_expiry_date: insuranceExpiryDate }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Could not update expiry date. Please try again."));
+  }
+  return data as DriverInsuranceExpiryResponse;
+}
+
+// ── Driver Invoices ───────────────────────────────────────────────────────────
+
+export type DriverInvoiceType =
+  | "fuel"
+  | "parking"
+  | "toll"
+  | "repair_maintenance"
+  | "car_wash"
+  | "other";
+
+export type DriverInvoiceReviewStatus = "pending" | "approved" | "rejected";
+
+export type DriverInvoiceItem = {
+  id: string;
+  invoice_type: DriverInvoiceType;
+  invoice_date: string;
+  amount: number;
+  currency: string;
+  details: string | null;
+  notes: string | null;
+  invoice_number: string;
+  review_status: DriverInvoiceReviewStatus;
+  status: "uploaded" | "replaced" | "deleted";
+  file_name: string | null;
+  mime_type: string | null;
+  receipt_preview_url: string | null;
+  created_at: string | null;
+};
+
+export type DriverInvoiceSummary = {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  total_amount_this_month: number;
+};
+
+export type DriverInvoicesListResponse = {
+  summary: DriverInvoiceSummary;
+  items: DriverInvoiceItem[];
+};
+
+export async function fetchDriverInvoices(
+  accessToken: string,
+): Promise<DriverInvoicesListResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/driver/invoices`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Could not load invoices."));
+  }
+  return data as DriverInvoicesListResponse;
+}
+
+export type DriverInvoiceCreateResponse = {
+  message: string;
+  invoice: DriverInvoiceItem;
+};
+
+export type UploadDriverInvoicePayload = {
+  invoiceType: DriverInvoiceType;
+  invoiceDate: string;
+  amount: number;
+  details?: string;
+  notes?: string;
+  file: { uri: string; name: string; mimeType: string };
+};
+
+export async function uploadDriverInvoice(
+  payload: UploadDriverInvoicePayload,
+  accessToken: string,
+): Promise<DriverInvoiceCreateResponse> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    (formData as any).append("file", {
+      uri: payload.file.uri,
+      name: payload.file.name,
+      type: payload.file.mimeType,
+    });
+    formData.append("invoice_type", payload.invoiceType);
+    formData.append("invoice_date", payload.invoiceDate);
+    formData.append("amount", String(payload.amount));
+    if (payload.details) formData.append("details", payload.details);
+    if (payload.notes) formData.append("notes", payload.notes);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BACKEND_BASE_URL}/api/v1/driver/invoices`);
+    xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data as DriverInvoiceCreateResponse);
+        } else {
+          reject(new Error(extractErrorMessage(data, "Invoice upload failed. Please try again.")));
+        }
+      } catch {
+        reject(new Error("Invoice upload failed. Please try again."));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload."));
+    xhr.ontimeout = () => reject(new Error("Upload timed out. Please try again."));
+    xhr.send(formData);
+  });
+}
+
 // ── Change Password ───────────────────────────────────────────────────────────
 
 export async function changePassword(

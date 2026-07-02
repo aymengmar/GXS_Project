@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import {
   Alert,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -167,8 +168,40 @@ interface Props {
 
 // ─── main component ────────────────────────────────────────────────────────────
 export default function DriverAssignmentScreen({ onNavigate: _onNavigate }: Props) {
-  function handleContactWarehouse() {
-    Alert.alert("Contact Warehouse", `Phone: ${ASSIGNMENT.phone}\nEmail: ${ASSIGNMENT.email}`);
+  function handlePhonePress() {
+    Alert.alert(
+      "Call Warehouse?",
+      `Do you want to call ${ASSIGNMENT.phone}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call",
+          onPress: () => {
+            Linking.openURL("tel:+491234567890").catch(() => {
+              Alert.alert("Unable to open phone app.");
+            });
+          },
+        },
+      ]
+    );
+  }
+
+  function handleEmailPress() {
+    Alert.alert(
+      "Email Warehouse?",
+      `Do you want to send an email to ${ASSIGNMENT.email}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Email",
+          onPress: () => {
+            Linking.openURL("mailto:warehouse@gxs-delivery.com").catch(() => {
+              Alert.alert("Unable to open email app.");
+            });
+          },
+        },
+      ]
+    );
   }
 
   return (
@@ -302,7 +335,7 @@ export default function DriverAssignmentScreen({ onNavigate: _onNavigate }: Prop
 
             <View style={styles.contactCol}>
               {/* Phone */}
-              <View style={styles.contactItem}>
+              <Pressable style={styles.contactItem} onPress={handlePhonePress}>
                 <View style={styles.contactIconBox}>
                   <PhoneIcon size={18} color={ORANGE} />
                 </View>
@@ -310,10 +343,10 @@ export default function DriverAssignmentScreen({ onNavigate: _onNavigate }: Prop
                   <Text style={styles.contactLabel}>Phone</Text>
                   <Text style={styles.contactValue}>{ASSIGNMENT.phone}</Text>
                 </View>
-              </View>
+              </Pressable>
 
               {/* Email */}
-              <View style={styles.contactItem}>
+              <Pressable style={styles.contactItem} onPress={handleEmailPress}>
                 <View style={styles.contactIconBox}>
                   <MailIcon size={18} color={ORANGE} />
                 </View>
@@ -321,13 +354,8 @@ export default function DriverAssignmentScreen({ onNavigate: _onNavigate }: Prop
                   <Text style={styles.contactLabel}>Email</Text>
                   <Text style={styles.contactValue}>{ASSIGNMENT.email}</Text>
                 </View>
-              </View>
+              </Pressable>
             </View>
-
-            <Pressable style={styles.orangeBtn} onPress={handleContactWarehouse}>
-              <PhoneIcon size={18} color={WHITE} />
-              <Text style={styles.orangeBtnText}>Contact Warehouse</Text>
-            </Pressable>
           </View>
 
           {/* ── Notes card ────────────────────────────────────────────────────── */}
@@ -580,7 +608,6 @@ const styles = StyleSheet.create({
   contactCol: {
     flexDirection: "column",
     gap: 8,
-    marginBottom: 14,
   },
   contactItem: {
     flexDirection: "row",
@@ -615,21 +642,6 @@ const styles = StyleSheet.create({
     color: WHITE,
     marginTop: 1,
   },
-  orangeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ORANGE,
-    borderRadius: 12,
-    paddingVertical: 14,
-    gap: 8,
-  },
-  orangeBtnText: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 15,
-    color: WHITE,
-  },
-
   // ── Notes card
   notesText: {
     fontFamily: "Poppins_400Regular",

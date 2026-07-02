@@ -1,9 +1,23 @@
-import type { DriverTab } from "@/components/driver/DriverBottomTabs";
-import { images } from "@/constants/images";
-import { StatusBar } from "expo-status-bar";
 import {
+  DriverDocumentListItem,
+  DriverVehicleResponse,
+  fetchDriverVehicle,
+  updateDriverInsuranceExpiry,
+} from "@/api/backendClient";
+import type { DriverTab } from "@/components/driver/DriverBottomTabs";
+import DriverDocumentPreviewModal from "@/components/driver/DriverDocumentPreviewModal";
+import InsuranceExpiryDateModal from "@/components/driver/InsuranceExpiryDateModal";
+import { images } from "@/constants/images";
+import { sessionStore } from "@/store/sessionStore";
+import { formatDaysLeftLabel, formatExpiryDate } from "@/utils/insuranceExpiry";
+import { StatusBar } from "expo-status-bar";
+import { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
   Image,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,15 +33,36 @@ const INNER = "#111E33";
 const BORDER = "rgba(255,255,255,0.07)";
 const ORANGE = "#FF6500";
 const GREEN = "#22C55E";
+const AMBER = "#F59E0B";
+const RED = "#EF4444";
 const WHITE = "#FFFFFF";
-const DIM = "rgba(255,255,255,0.60)";
 const MUTED = "rgba(255,255,255,0.35)";
 
-// ─── mock data ─────────────────────────────────────────────────────────────────
-const VEHICLE = {
-  warehouse: "Hamburg Main Warehouse",
-  currentMonth: "July 2026",
+const NOT_PROVIDED = "Not provided";
+
+const DRIVER_STATUS_COLOR: Record<string, string> = {
+  approved: GREEN,
+  pending: AMBER,
+  rejected: RED,
 };
+
+const DOCUMENT_STATUS_COLOR: Record<string, string> = {
+  approved: GREEN,
+  pending: AMBER,
+  rejected: RED,
+  not_uploaded: RED,
+};
+
+const EXPIRY_STATUS_COLOR: Record<string, string> = {
+  valid: GREEN,
+  expiring_soon: AMBER,
+  expired: RED,
+  missing: MUTED,
+};
+
+function orFallback(value: string | null | undefined, fallback: string): string {
+  return value && value.trim().length > 0 ? value : fallback;
+}
 
 // ─── SVG icons ─────────────────────────────────────────────────────────────────
 function PersonIcon({ size = 22, color = WHITE }: { size?: number; color?: string }) {
@@ -61,30 +96,31 @@ function IdCardIcon({ size = 18, color = ORANGE }: { size?: number; color?: stri
   );
 }
 
-function ClockIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
+function CheckCircleIcon({ size = 18, color = GREEN }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={1.8} />
-      <Polyline points="12 6 12 12 16 14" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <Polyline points="9 12 11 14 15 10" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
 
-function WarehouseIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
+function ShieldCheckIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M9 22V12h6v10" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+      <Polyline points="9 12 11 14 15 10" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
 
-function DocIcon({ size = 22, color = ORANGE }: { size?: number; color?: string }) {
+function DocIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
       <Polyline points="14 2 14 8 20 8" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-      <Path d="M16 13H8M16 17H8M10 9H8" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <Line x1="16" y1="13" x2="8" y2="13" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+      <Line x1="16" y1="17" x2="8" y2="17" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
     </Svg>
   );
 }
@@ -98,7 +134,7 @@ function CalendarIcon({ size = 18, color = ORANGE }: { size?: number; color?: st
   );
 }
 
-function InfoIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
+function InfoIcon({ size = 20, color = ORANGE }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={1.8} />
@@ -107,51 +143,12 @@ function InfoIcon({ size = 18, color = ORANGE }: { size?: number; color?: string
   );
 }
 
-function UploadCloudIcon({ size = 20, color = WHITE }: { size?: number; color?: string }) {
+function XCircleIcon({ size = 32, color = RED }: { size?: number; color?: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path d="M16 16l-4-4-4 4" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <Line x1="12" y1="12" x2="12" y2="21" stroke={color} strokeWidth={2} strokeLinecap="round" />
-      <Path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-function BarChartIcon({ size = 22, color = ORANGE }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Line x1="6" y1="20" x2="6" y2="10" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
-      <Line x1="12" y1="20" x2="12" y2="4" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
-      <Line x1="18" y1="20" x2="18" y2="14" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
-    </Svg>
-  );
-}
-
-function FuelIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Rect x="3" y="3" width="10" height="18" rx="1.5" stroke={color} strokeWidth={1.6} />
-      <Line x1="6" y1="8" x2="10" y2="8" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
-      <Path d="M13 8h3l3 3v6a1.5 1.5 0 0 1-3 0v-2a1.5 1.5 0 0 0-1.5-1.5H15" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-function ParkingIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={1.6} />
-      <Path d="M9 16V8h3.5a2.5 2.5 0 0 1 0 5H9" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
-    </Svg>
-  );
-}
-
-function OtherCostsIcon({ size = 18, color = ORANGE }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx="5" cy="12" r="1.6" stroke={color} strokeWidth={1.6} fill={color} />
-      <Circle cx="12" cy="12" r="1.6" stroke={color} strokeWidth={1.6} fill={color} />
-      <Circle cx="19" cy="12" r="1.6" stroke={color} strokeWidth={1.6} fill={color} />
+      <Circle cx="12" cy="12" r="10" stroke={color} strokeWidth={1.8} />
+      <Line x1="15" y1="9" x2="9" y2="15" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
+      <Line x1="9" y1="9" x2="15" y2="15" stroke={color} strokeWidth={1.8} strokeLinecap="round" />
     </Svg>
   );
 }
@@ -161,7 +158,7 @@ function IconBox({ children }: { children: React.ReactNode }) {
   return <View style={styles.iconBox}>{children}</View>;
 }
 
-function AssignmentField({
+function DetailField({
   icon,
   label,
   value,
@@ -173,54 +170,12 @@ function AssignmentField({
   valueColor?: string;
 }) {
   return (
-    <View style={styles.assignmentField}>
+    <View style={styles.detailField}>
       <IconBox>{icon}</IconBox>
-      <View style={styles.assignmentFieldText}>
+      <View style={styles.detailFieldText}>
         <Text style={styles.fieldLabel}>{label}</Text>
         <Text style={[styles.fieldValue, { color: valueColor }]}>{value}</Text>
       </View>
-    </View>
-  );
-}
-
-function InvoiceStatBox({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.invoiceStatBox}>
-      <IconBox>{icon}</IconBox>
-      <Text style={styles.invoiceStatLabel}>{label}</Text>
-      <Text style={styles.invoiceStatValue}>{value}</Text>
-    </View>
-  );
-}
-
-function CostRow({
-  icon,
-  label,
-  value,
-  valueColor = MUTED,
-  last = false,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  valueColor?: string;
-  last?: boolean;
-}) {
-  return (
-    <View style={[styles.costRow, last && { borderBottomWidth: 0 }]}>
-      <View style={styles.costRowLeft}>
-        {icon}
-        <Text style={styles.costLabel}>{label}</Text>
-      </View>
-      <Text style={[styles.costValue, { color: valueColor }]}>{value}</Text>
     </View>
   );
 }
@@ -231,6 +186,95 @@ interface Props {
 }
 
 export default function DriverVehicleScreen({ onNavigate: _onNavigate }: Props) {
+  const [data, setData] = useState<DriverVehicleResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
+  const [previewVisible, setPreviewVisible] = useState(false);
+  const [expiryModalVisible, setExpiryModalVisible] = useState(false);
+  const [savingExpiry, setSavingExpiry] = useState(false);
+
+  const load = useCallback(async (isRefresh: boolean) => {
+    const session = sessionStore.get();
+    if (session?.kind !== "driver") return;
+
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setFetchErr(null);
+
+    try {
+      const result = await fetchDriverVehicle(session.access_token);
+      setData(result);
+    } catch (err: unknown) {
+      setFetchErr(err instanceof Error ? err.message : "Could not load vehicle information.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load(false);
+  }, [load]);
+
+  function handleViewInsurance() {
+    if (data?.insurance.document_preview_url) {
+      setPreviewVisible(true);
+    } else {
+      Alert.alert("Insurance document is not available yet.");
+    }
+  }
+
+  async function handleSaveExpiryDate(isoDate: string) {
+    const session = sessionStore.get();
+    if (session?.kind !== "driver") return;
+
+    setSavingExpiry(true);
+    try {
+      await updateDriverInsuranceExpiry(session.access_token, isoDate);
+      setExpiryModalVisible(false);
+      await load(false);
+      Alert.alert("Success", "Insurance expiry date updated.");
+    } catch {
+      Alert.alert("Error", "Could not update expiry date. Please try again.");
+    } finally {
+      setSavingExpiry(false);
+    }
+  }
+
+  const insuranceDocForPreview: DriverDocumentListItem | null =
+    data?.insurance.document_preview_url
+      ? {
+          id: "insurance-document",
+          document_type: "vehicle_insurance",
+          title: "Insurance Document",
+          description: "",
+          review_status:
+            data.insurance.document_status === "not_uploaded"
+              ? "missing"
+              : data.insurance.document_status,
+          review_status_label: data.insurance.document_status_label,
+          review_status_color: "",
+          uploaded_at: null,
+          updated_at: null,
+          last_updated_label: "",
+          file_name: null,
+          mime_type: data.insurance.mime_type,
+          signed_url: data.insurance.document_preview_url,
+        }
+      : null;
+
+  const driverStatusColor = data ? DRIVER_STATUS_COLOR[data.driver.status] ?? MUTED : GREEN;
+  const documentStatusColor = data
+    ? DOCUMENT_STATUS_COLOR[data.insurance.document_status] ?? MUTED
+    : GREEN;
+  const expiryStatusColor = data
+    ? EXPIRY_STATUS_COLOR[data.insurance.expiry_status] ?? MUTED
+    : MUTED;
+  const expiryDaysLeftLabel = data
+    ? formatDaysLeftLabel(data.insurance.expiry_status, data.insurance.days_until_expiry)
+    : "";
+
   return (
     <>
       <StatusBar style="light" />
@@ -239,15 +283,16 @@ export default function DriverVehicleScreen({ onNavigate: _onNavigate }: Props) 
           style={styles.scroll}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={ORANGE} />
+          }
         >
           {/* ── Header ──────────────────────────────────────────────────────── */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Text style={styles.headerSmall}>My vehicle</Text>
               <Text style={styles.headerTitle}>Vehicle</Text>
-              <Text style={styles.headerSub}>
-                Your company vehicle and invoice area
-              </Text>
+              <Text style={styles.headerSub}>Your own-car driver information</Text>
             </View>
             <View>
               <View style={styles.profileBtn}>
@@ -257,156 +302,169 @@ export default function DriverVehicleScreen({ onNavigate: _onNavigate }: Props) 
             </View>
           </View>
 
-          {/* ── Company Vehicle card ─────────────────────────────────────────── */}
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <Text style={styles.cardTitle}>Company Vehicle</Text>
-              <View style={styles.activeBadge}>
-                <View style={styles.greenDot} />
-                <Text style={styles.activeBadgeText}>Active</Text>
+          {loading ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="large" color={ORANGE} />
+            </View>
+          ) : fetchErr ? (
+            <View style={styles.errorBox}>
+              <XCircleIcon size={32} color={RED} />
+              <Text style={styles.errorTitle}>Could not load vehicle information</Text>
+              <Pressable style={styles.retryBtn} onPress={() => load(false)}>
+                <Text style={styles.retryBtnText}>Try Again</Text>
+              </Pressable>
+            </View>
+          ) : data ? (
+            <>
+              {/* ── My Vehicle card ──────────────────────────────────────────────── */}
+              <View style={styles.card}>
+                <View style={styles.cardHeaderRow}>
+                  <Text style={styles.cardTitle}>My Vehicle</Text>
+                  <View style={[styles.activeBadge, { backgroundColor: `${driverStatusColor}26` }]}>
+                    <View style={[styles.greenDot, { backgroundColor: driverStatusColor }]} />
+                    <Text style={[styles.activeBadgeText, { color: driverStatusColor }]}>
+                      {data.driver.status_label}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.vehicleRow}>
+                  <View style={styles.vehicleImageBox}>
+                    <Image
+                      source={images.ownVehicle}
+                      style={styles.vehicleImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+
+                  <View style={styles.vehicleInfoCol}>
+                    <Text style={styles.vehicleName}>
+                      {orFallback(data.vehicle.make_model, NOT_PROVIDED)}
+                    </Text>
+                    <View style={styles.plateBox}>
+                      <Text style={styles.plateBoxText}>
+                        {orFallback(data.vehicle.plate_number, NOT_PROVIDED)}
+                      </Text>
+                    </View>
+                    <View style={styles.driverTypeBadge}>
+                      <PersonIcon size={15} color={ORANGE} />
+                      <Text style={styles.driverTypeBadgeText}>{data.driver.driver_type_label}</Text>
+                    </View>
+                  </View>
+                </View>
               </View>
-            </View>
 
-            <View style={styles.vehicleImageBox}>
-              <Image
-                source={images.companyVehicle}
-                style={styles.vehicleImage}
-                resizeMode="contain"
-              />
-            </View>
+              {/* ── Vehicle Details card ─────────────────────────────────────────── */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Vehicle Details</Text>
 
-            <View style={styles.driverTypeBadge}>
-              <PersonIcon size={16} color={ORANGE} />
-              <Text style={styles.driverTypeBadgeText}>Company Car Driver</Text>
-            </View>
-
-            <Text style={styles.companyVehicleText}>
-              You are registered as a company-car driver.
-            </Text>
-            <Text style={styles.companyVehicleDesc}>
-              Company car details and invoice information will appear here.
-            </Text>
-          </View>
-
-          {/* ── Vehicle Assignment card ──────────────────────────────────────── */}
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <CarFrontIcon size={20} color={ORANGE} />
-              <Text style={styles.cardTitle}>Vehicle Assignment</Text>
-            </View>
-
-            <View style={styles.assignmentGrid}>
-              <View style={styles.assignmentCol}>
-                <AssignmentField
-                  icon={<CarFrontIcon size={16} color={ORANGE} />}
-                  label="Assigned Vehicle"
-                  value="Company vehicle details will appear here."
-                />
-                <AssignmentField
-                  icon={<ClockIcon size={16} color={ORANGE} />}
-                  label="Vehicle Status"
-                  value="Pending assignment"
-                  valueColor={ORANGE}
-                />
+                <View style={styles.detailsGrid}>
+                  <View style={styles.detailsCol}>
+                    <DetailField
+                      icon={<CarFrontIcon size={16} color={ORANGE} />}
+                      label="Make / Model"
+                      value={orFallback(data.vehicle.make_model, NOT_PROVIDED)}
+                    />
+                    <DetailField
+                      icon={<PersonIcon size={16} color={ORANGE} />}
+                      label="Vehicle Type"
+                      value={data.vehicle.vehicle_type}
+                    />
+                  </View>
+                  <View style={styles.detailsCol}>
+                    <DetailField
+                      icon={<IdCardIcon size={16} color={ORANGE} />}
+                      label="Plate Number"
+                      value={orFallback(data.vehicle.plate_number, NOT_PROVIDED)}
+                    />
+                    <DetailField
+                      icon={<CheckCircleIcon size={16} color={GREEN} />}
+                      label="Registration Status"
+                      value={data.vehicle.registration_status}
+                      valueColor={GREEN}
+                    />
+                  </View>
+                </View>
               </View>
-              <View style={styles.assignmentCol}>
-                <AssignmentField
-                  icon={<IdCardIcon size={16} color={ORANGE} />}
-                  label="Plate Number"
-                  value="Not assigned yet"
-                />
-                <AssignmentField
-                  icon={<WarehouseIcon size={16} color={ORANGE} />}
-                  label="Assigned Warehouse"
-                  value={VEHICLE.warehouse}
-                />
+
+              {/* ── Insurance Information card ───────────────────────────────────── */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Insurance Information</Text>
+
+                <View style={styles.insuranceList}>
+                  <DetailField
+                    icon={<ShieldCheckIcon size={16} color={ORANGE} />}
+                    label="Insurance Provider"
+                    value={orFallback(data.insurance.provider, NOT_PROVIDED)}
+                  />
+                  <DetailField
+                    icon={<DocIcon size={16} color={ORANGE} />}
+                    label="Insurance Number"
+                    value={orFallback(data.insurance.insurance_number, NOT_PROVIDED)}
+                  />
+                  <DetailField
+                    icon={<CheckCircleIcon size={16} color={documentStatusColor} />}
+                    label="Document Status"
+                    value={orFallback(data.insurance.document_status_label, "Not uploaded")}
+                    valueColor={documentStatusColor}
+                  />
+                  <Pressable
+                    style={styles.detailField}
+                    onPress={() => setExpiryModalVisible(true)}
+                  >
+                    <IconBox>
+                      <CalendarIcon size={16} color={expiryStatusColor} />
+                    </IconBox>
+                    <View style={styles.detailFieldText}>
+                      <Text style={styles.fieldLabel}>Expiry Date</Text>
+                      <Text style={[styles.fieldValue, { color: expiryStatusColor }]}>
+                        {data.insurance.expiry_date
+                          ? formatExpiryDate(data.insurance.expiry_date)
+                          : "Tap to add expiry date"}
+                      </Text>
+                      {expiryDaysLeftLabel ? (
+                        <Text style={[styles.expirySubtitle, { color: expiryStatusColor }]}>
+                          {expiryDaysLeftLabel}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                </View>
+
+                <Pressable style={styles.outlineBtn} onPress={handleViewInsurance}>
+                  <DocIcon size={18} color={ORANGE} />
+                  <Text style={styles.outlineBtnText}>View Insurance Document</Text>
+                </Pressable>
               </View>
-            </View>
-          </View>
 
-          {/* ── Company Car Invoices card ────────────────────────────────────── */}
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <DocIcon size={20} color={ORANGE} />
-              <Text style={styles.cardTitle}>Company Car Invoices</Text>
-            </View>
-            <Text style={styles.invoicesDesc}>
-              Upload fuel, parking, repair, or other company car invoices when
-              required.
-            </Text>
-
-            <View style={styles.divider} />
-
-            <View style={styles.invoiceStatRow}>
-              <InvoiceStatBox
-                icon={<CalendarIcon size={18} color={ORANGE} />}
-                label="Current Month"
-                value={VEHICLE.currentMonth}
-              />
-              <InvoiceStatBox
-                icon={<DocIcon size={18} color={ORANGE} />}
-                label="Submitted Invoices"
-                value="0 submitted"
-              />
-              <InvoiceStatBox
-                icon={<InfoIcon size={18} color={ORANGE} />}
-                label="Review Status"
-                value="No invoices submitted yet"
-              />
-            </View>
-
-            <Pressable style={styles.orangeBtn}>
-              <UploadCloudIcon size={18} color={WHITE} />
-              <Text style={styles.orangeBtnText}>Upload Invoice</Text>
-            </Pressable>
-          </View>
-
-          {/* ── Monthly Cost Summary card ────────────────────────────────────── */}
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <BarChartIcon size={20} color={ORANGE} />
-              <Text style={styles.cardTitle}>Monthly Cost Summary</Text>
-            </View>
-
-            <View style={styles.monthRow}>
-              <IconBox>
-                <CalendarIcon size={18} color={ORANGE} />
-              </IconBox>
-              <View>
-                <Text style={styles.fieldLabel}>Month</Text>
-                <Text style={styles.fieldValue}>{VEHICLE.currentMonth}</Text>
+              {/* ── Info card ─────────────────────────────────────────────────────── */}
+              <View style={styles.infoCard}>
+                <InfoIcon size={20} color={ORANGE} />
+                <Text style={styles.infoText}>
+                  Packet totals and earnings will be calculated from warehouse or
+                  external delivery data.
+                </Text>
               </View>
-            </View>
-
-            <View style={styles.divider} />
-
-            <CostRow
-              icon={<FuelIcon size={16} color={ORANGE} />}
-              label="Fuel Invoices"
-              value="Coming soon"
-            />
-            <CostRow
-              icon={<ParkingIcon size={16} color={ORANGE} />}
-              label="Parking Invoices"
-              value="Coming soon"
-            />
-            <CostRow
-              icon={<OtherCostsIcon size={16} color={ORANGE} />}
-              label="Other Costs"
-              value="Coming soon"
-            />
-            <CostRow
-              icon={<InfoIcon size={16} color={ORANGE} />}
-              label="Status"
-              value="Not submitted"
-              valueColor={ORANGE}
-              last
-            />
-          </View>
+            </>
+          ) : null}
 
           <View style={{ height: 16 }} />
         </ScrollView>
       </SafeAreaView>
+
+      <DriverDocumentPreviewModal
+        visible={previewVisible}
+        document={insuranceDocForPreview}
+        onClose={() => setPreviewVisible(false)}
+      />
+
+      <InsuranceExpiryDateModal
+        visible={expiryModalVisible}
+        initialDate={data?.insurance.expiry_date ?? null}
+        saving={savingExpiry}
+        onCancel={() => setExpiryModalVisible(false)}
+        onSave={handleSaveExpiryDate}
+      />
     </>
   );
 }
@@ -476,6 +534,36 @@ const styles = StyleSheet.create({
     borderColor: BG,
   },
 
+  // ── Loading / error states
+  loadingBox: {
+    height: 300,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  errorBox: {
+    height: 300,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  errorTitle: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 14,
+    color: WHITE,
+  },
+  retryBtn: {
+    marginTop: 4,
+    backgroundColor: ORANGE,
+    borderRadius: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  retryBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 13,
+    color: WHITE,
+  },
+
   // ── Card base
   card: {
     backgroundColor: CARD,
@@ -491,19 +579,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 14,
   },
-  cardTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 14,
-  },
   cardTitle: {
     fontFamily: "Poppins_700Bold",
     fontSize: 16,
     color: WHITE,
+    marginBottom: 14,
   },
 
-  // ── Company Vehicle card
+  // ── My Vehicle card
   activeBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -524,9 +607,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: GREEN,
   },
+  vehicleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
   vehicleImageBox: {
-    width: "100%",
-    height: 150,
+    flex: 1,
+    height: 110,
     backgroundColor: INNER,
     borderRadius: 12,
     borderWidth: 1,
@@ -534,57 +622,70 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
-    marginBottom: 12,
   },
   vehicleImage: {
-    width: "85%",
-    height: "85%",
+    width: "88%",
+    height: "88%",
+  },
+  vehicleInfoCol: {
+    flex: 1,
+    gap: 8,
+    alignItems: "flex-start",
+  },
+  vehicleName: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 17,
+    color: WHITE,
+  },
+  plateBox: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: INNER,
+  },
+  plateBoxText: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 14,
+    color: WHITE,
+    letterSpacing: 0.5,
   },
   driverTypeBadge: {
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     borderWidth: 1,
     borderColor: ORANGE,
     borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
   driverTypeBadgeText: {
     fontFamily: "Poppins_600SemiBold",
-    fontSize: 13,
+    fontSize: 12,
     color: ORANGE,
   },
-  companyVehicleText: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 14,
-    color: WHITE,
-    marginBottom: 6,
-  },
-  companyVehicleDesc: {
-    fontFamily: "Poppins_400Regular",
-    fontSize: 12,
-    color: MUTED,
-    lineHeight: 18,
-  },
 
-  // ── Vehicle Assignment card
-  assignmentGrid: {
+  // ── Vehicle Details / Insurance rows
+  detailsGrid: {
     flexDirection: "row",
     gap: 12,
   },
-  assignmentCol: {
+  detailsCol: {
     flex: 1,
-    gap: 12,
+    gap: 14,
   },
-  assignmentField: {
+  insuranceList: {
+    gap: 14,
+    marginBottom: 16,
+  },
+  detailField: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 10,
   },
-  assignmentFieldText: {
+  detailFieldText: {
     flex: 1,
   },
   iconBox: {
@@ -608,84 +709,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: WHITE,
   },
+  expirySubtitle: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 11,
+    marginTop: 2,
+  },
 
-  // ── Invoices card
-  invoicesDesc: {
+  // ── Insurance document button
+  outlineBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: ORANGE,
+    borderRadius: 12,
+    paddingVertical: 13,
+    gap: 8,
+  },
+  outlineBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 14,
+    color: ORANGE,
+  },
+
+  // ── Info card
+  infoCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    backgroundColor: CARD,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: BORDER,
+    padding: 14,
+  },
+  infoText: {
+    flex: 1,
     fontFamily: "Poppins_400Regular",
     fontSize: 12,
     color: MUTED,
     lineHeight: 18,
-    marginBottom: 14,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: BORDER,
-    marginBottom: 14,
-  },
-  invoiceStatRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 16,
-  },
-  invoiceStatBox: {
-    flex: 1,
-    alignItems: "center",
-    gap: 6,
-  },
-  invoiceStatLabel: {
-    fontFamily: "Poppins_400Regular",
-    fontSize: 10,
-    color: MUTED,
-    textAlign: "center",
-  },
-  invoiceStatValue: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 12,
-    color: WHITE,
-    textAlign: "center",
-  },
-  orangeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ORANGE,
-    borderRadius: 12,
-    paddingVertical: 14,
-    gap: 8,
-  },
-  orangeBtnText: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 15,
-    color: WHITE,
-  },
-
-  // ── Monthly Cost Summary card
-  monthRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 14,
-  },
-  costRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-  },
-  costRowLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  costLabel: {
-    fontFamily: "Poppins_500Medium",
-    fontSize: 13,
-    color: DIM,
-  },
-  costValue: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 13,
   },
 });
