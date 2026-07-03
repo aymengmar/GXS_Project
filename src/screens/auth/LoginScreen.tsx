@@ -1,4 +1,4 @@
-import { isAdminLoginResponse, loginUser } from "@/api/backendClient";
+import { isAdminLoginResponse, isWarehouseLoginResponse, loginUser } from "@/api/backendClient";
 import { images } from "@/constants/images";
 import { sessionStore } from "@/store/sessionStore";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -182,6 +182,17 @@ export default function LoginScreen() {
       if (isAdminLoginResponse(response)) {
         sessionStore.setAdmin(response);
         router.replace("/admin" as any);
+      } else if (isWarehouseLoginResponse(response)) {
+        sessionStore.setWarehouse(response);
+        if (response.next_route === "change_password") {
+          router.replace("/create-new-password" as any);
+        } else if (response.next_route === "warehouse_dashboard") {
+          router.replace("/warehouse" as any);
+        } else if (response.next_route === "warehouse_pending") {
+          router.replace("/warehouse-pending" as any);
+        } else if (response.next_route === "warehouse_blocked") {
+          router.replace("/warehouse-blocked" as any);
+        }
       } else {
         sessionStore.setDriver(response);
         if (response.must_change_password) {

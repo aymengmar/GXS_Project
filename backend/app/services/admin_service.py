@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status as http_status
 
 from app.db.supabase import supabase_admin
-from app.services.email_service import send_welcome_email
+from app.services.email_service import send_warehouse_welcome_email, send_welcome_email
 from app.schemas.admin import (
     AssignExternalDriverIdResponse,
     AssignWarehouseExternalIdResponse,
@@ -915,6 +915,65 @@ def get_warehouse_users_list(
     )
 
 
+def _send_warehouse_welcome(
+    *,
+    auth_user_id: str,
+    email: str,
+    full_name: str,
+    external_id: str,
+) -> None:
+    """Generate a fresh temp password, set it on the Auth account, and email it."""
+    temp_password = _generate_temporary_password()
+
+    try:
+        supabase_admin.auth.admin.update_user_by_id(
+            auth_user_id,
+            {"password": temp_password},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Warehouse status updated but temporary password could not be set. Contact support.",
+        ) from exc
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        supabase_admin.table("app_users").update(
+            {
+                "must_change_password": True,
+                "last_temp_password_generated_at": now_iso,
+            }
+        ).eq("auth_user_id", auth_user_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Warehouse status updated but account flags could not be set. Contact support.",
+        ) from exc
+
+    try:
+        send_warehouse_welcome_email(
+            to_email=email,
+            full_name=full_name,
+            external_id=external_id,
+            temp_password=temp_password,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Warehouse status updated and password set, but the welcome email could not be "
+                "delivered. Please contact the user directly to provide login credentials."
+            ),
+        ) from exc
+
+    try:
+        supabase_admin.table("app_users").update(
+            {"welcome_email_sent_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("auth_user_id", auth_user_id).execute()
+    except Exception:
+        pass
+
+
 def change_warehouse_user_status(user_id: str, requested_status: str) -> ChangeWarehouseStatusResponse:
     if requested_status not in _WH_CHANGE_STATUSES:
         raise HTTPException(
@@ -924,14 +983,16 @@ def change_warehouse_user_status(user_id: str, requested_status: str) -> ChangeW
 
     profile_result = (
         supabase_admin.table("warehouse_profiles")
-        .select("id, auth_user_id")
+        .select("id, auth_user_id, full_name, email, external_id, status")
         .eq("id", user_id)
         .execute()
     )
     if not profile_result.data:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Warehouse user not found.")
 
-    auth_user_id = profile_result.data[0]["auth_user_id"]
+    profile = profile_result.data[0]
+    auth_user_id = profile["auth_user_id"]
+    old_status = profile.get("status") or ""
     is_active = _WH_STATUS_IS_ACTIVE[requested_status]
 
     try:
@@ -953,6 +1014,14 @@ def change_warehouse_user_status(user_id: str, requested_status: str) -> ChangeW
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Status updated but could not sync app_users.is_active: {exc}",
         ) from exc
+
+    if old_status in ("pending", "blocked") and requested_status == "active":
+        _send_warehouse_welcome(
+            auth_user_id=auth_user_id,
+            email=profile.get("email") or "",
+            full_name=profile.get("full_name") or "",
+            external_id=profile.get("external_id") or "",
+        )
 
     return ChangeWarehouseStatusResponse(
         id=user_id,
@@ -1056,16 +1125,17 @@ def create_warehouse_user(req: CreateWarehouseUserRequest) -> CreateWarehouseUse
             detail="This External ID is already assigned to another warehouse user.",
         )
 
-    # Generate a secure temporary password — user must reset on first login
-    # TODO: in production, email this password and do not return it
-    temp_password = _generate_temporary_password()
+    # Account is created PENDING — no login credentials are issued yet.
+    # A real temporary password is generated and emailed only when Admin
+    # later activates the account (pending -> active), see _send_warehouse_welcome.
+    placeholder_password = _generate_temporary_password()
 
     # Create Supabase Auth user
     try:
         auth_response = supabase_admin.auth.admin.create_user(
             {
                 "email": email_str,
-                "password": temp_password,
+                "password": placeholder_password,
                 "email_confirm": True,
             }
         )
@@ -1090,8 +1160,9 @@ def create_warehouse_user(req: CreateWarehouseUserRequest) -> CreateWarehouseUse
                 "auth_user_id": auth_user_id,
                 "email": email_str,
                 "full_name": full_name,
-                "role": "warehouse_staff",
+                "role": "warehouse",
                 "is_active": True,
+                "must_change_password": True,
             }
         ).execute()
 
@@ -1103,7 +1174,7 @@ def create_warehouse_user(req: CreateWarehouseUserRequest) -> CreateWarehouseUse
                 "phone": req.phone,
                 "city": req.city,
                 "external_id": external_id,
-                "status": "active",
+                "status": "pending",
             }
         ).execute()
     except Exception as exc:
@@ -1126,9 +1197,9 @@ def create_warehouse_user(req: CreateWarehouseUserRequest) -> CreateWarehouseUse
         phone=req.phone,
         city=req.city,
         external_id=external_id,
-        role="warehouse_staff",
-        status="active",
-        status_label="Active",
-        status_color="green",
-        temporary_password=temp_password,
+        role="warehouse",
+        status="pending",
+        status_label=_WH_STATUS_LABEL["pending"],
+        status_color=_WH_STATUS_COLOR["pending"],
+        temporary_password=None,
     )

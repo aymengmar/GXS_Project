@@ -185,10 +185,39 @@ export type DriverLoginResponse = {
   must_change_password: boolean;
 };
 
-export type LoginResponse = AdminLoginResponse | DriverLoginResponse;
+export type WarehouseUserInfo = {
+  auth_user_id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  status: string;
+};
+
+export type WarehouseNextRoute =
+  | "change_password"
+  | "warehouse_dashboard"
+  | "warehouse_pending"
+  | "warehouse_blocked";
+
+export type WarehouseLoginResponse = {
+  access_token: string;
+  refresh_token: string;
+  user: WarehouseUserInfo;
+  next_route: WarehouseNextRoute;
+  must_change_password: boolean;
+};
+
+export type LoginResponse =
+  | AdminLoginResponse
+  | DriverLoginResponse
+  | WarehouseLoginResponse;
 
 export function isAdminLoginResponse(r: LoginResponse): r is AdminLoginResponse {
   return (r as AdminLoginResponse).next_route === "admin_dashboard";
+}
+
+export function isWarehouseLoginResponse(r: LoginResponse): r is WarehouseLoginResponse {
+  return (r as WarehouseLoginResponse).user?.role === "warehouse";
 }
 
 export async function loginUser(

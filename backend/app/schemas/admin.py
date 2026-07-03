@@ -244,7 +244,8 @@ class CreateWarehouseUserResponse(BaseModel):
     status: str
     status_label: str
     status_color: str
-    # TODO: in production, email this password and do not return it
+    # Always null at creation — the real temp password is generated and
+    # emailed only when Admin activates the account (pending -> active).
     temporary_password: Optional[str] = None
 
 

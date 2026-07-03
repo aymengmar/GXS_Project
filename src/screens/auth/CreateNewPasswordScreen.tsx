@@ -97,6 +97,10 @@ function routeAfterPasswordChange(router: ReturnType<typeof useRouter>) {
     } else {
       router.replace("/login" as any);
     }
+    return;
+  }
+  if (session.kind === "warehouse") {
+    router.replace("/warehouse" as any);
   }
 }
 
@@ -147,6 +151,14 @@ export default function CreateNewPasswordScreen() {
           car_type: session.car_type,
           status: session.status,
           external_driver_id: session.external_driver_id,
+          must_change_password: false,
+        });
+      } else if (session.kind === "warehouse") {
+        sessionStore.setWarehouse({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          user: session.user,
+          next_route: "warehouse_dashboard",
           must_change_password: false,
         });
       }

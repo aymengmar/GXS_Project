@@ -1,4 +1,8 @@
-import type { AdminLoginResponse, DriverLoginResponse } from "@/api/backendClient";
+import type {
+  AdminLoginResponse,
+  DriverLoginResponse,
+  WarehouseLoginResponse,
+} from "@/api/backendClient";
 
 type AdminSession = {
   kind: "admin";
@@ -19,7 +23,15 @@ type DriverSession = {
   must_change_password: boolean;
 };
 
-export type AppSession = AdminSession | DriverSession;
+type WarehouseSession = {
+  kind: "warehouse";
+  access_token: string;
+  refresh_token: string;
+  user: WarehouseLoginResponse["user"];
+  must_change_password: boolean;
+};
+
+export type AppSession = AdminSession | DriverSession | WarehouseSession;
 
 let _session: AppSession | null = null;
 
@@ -42,6 +54,15 @@ export const sessionStore = {
       car_type: response.car_type,
       status: response.status,
       external_driver_id: response.external_driver_id,
+      must_change_password: response.must_change_password ?? false,
+    };
+  },
+  setWarehouse(response: WarehouseLoginResponse) {
+    _session = {
+      kind: "warehouse",
+      access_token: response.access_token,
+      refresh_token: response.refresh_token,
+      user: response.user,
       must_change_password: response.must_change_password ?? false,
     };
   },

@@ -12,6 +12,7 @@ from app.schemas.auth import (
     EmailVerificationSendResponse,
     EmailVerificationVerifyRequest,
     EmailVerificationVerifyResponse,
+    WarehouseLoginResponse,
 )
 from app.services.auth_service import (
     change_password,
@@ -30,7 +31,7 @@ def register(payload: DriverRegisterRequest) -> DriverRegisterResponse:
 
 
 @router.post("/login")
-def login(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse:
+def login(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse | WarehouseLoginResponse:
     return login_user(payload)
 
 

@@ -20,7 +20,15 @@ from app.schemas.auth import (
     DriverRegisterResponse,
     EmailVerificationSendResponse,
     EmailVerificationVerifyResponse,
+    WarehouseLoginResponse,
+    WarehouseUserInfo,
 )
+
+_WAREHOUSE_STATUS_ROUTES = {
+    "active": "warehouse_dashboard",
+    "pending": "warehouse_pending",
+    "blocked": "warehouse_blocked",
+}
 
 
 def register_driver(payload: DriverRegisterRequest) -> DriverRegisterResponse:
@@ -192,7 +200,54 @@ def login_driver(payload: DriverLoginRequest) -> DriverLoginResponse:
     )
 
 
-def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse:
+def _complete_warehouse_login(
+    auth_user_id: str,
+    email: str,
+    full_name: str,
+    access_token: str,
+    refresh_token: str,
+    must_change_password: bool,
+) -> WarehouseLoginResponse:
+    """Load and validate the warehouse profile after successful Supabase Auth sign-in."""
+    result = (
+        supabase_admin.table("warehouse_profiles")
+        .select("id, status")
+        .eq("auth_user_id", auth_user_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "WAREHOUSE_PROFILE_NOT_FOUND", "message": "No warehouse profile found for this account."},
+        )
+
+    warehouse_status = result.data[0]["status"]
+    route = _WAREHOUSE_STATUS_ROUTES.get(warehouse_status)
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Unknown warehouse status: {warehouse_status}.",
+        )
+
+    next_route = "change_password" if warehouse_status == "active" and must_change_password else route
+
+    return WarehouseLoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=WarehouseUserInfo(
+            auth_user_id=auth_user_id,
+            email=email,
+            full_name=full_name,
+            role="warehouse",
+            status=warehouse_status,
+        ),
+        next_route=next_route,
+        must_change_password=must_change_password,
+    )
+
+
+def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginResponse | WarehouseLoginResponse:
     """Unified login: authenticate with Supabase, resolve role from app_users, then route."""
     try:
         auth_response = supabase_auth.auth.sign_in_with_password(
@@ -255,6 +310,16 @@ def login_user(payload: DriverLoginRequest) -> DriverLoginResponse | AdminLoginR
 
     if role == "driver":
         return _complete_driver_login(auth_user_id, access_token, must_change_pw)
+
+    if role == "warehouse":
+        return _complete_warehouse_login(
+            auth_user_id,
+            app_user["email"],
+            app_user["full_name"],
+            access_token,
+            refresh_token,
+            must_change_pw,
+        )
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

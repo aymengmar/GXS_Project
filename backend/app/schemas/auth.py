@@ -127,3 +127,19 @@ class AdminLoginResponse(BaseModel):
     refresh_token: str
     user: AdminUserInfo
     next_route: str
+
+
+class WarehouseUserInfo(BaseModel):
+    auth_user_id: str
+    email: str
+    full_name: str
+    role: str
+    status: str
+
+
+class WarehouseLoginResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    user: WarehouseUserInfo
+    next_route: str
+    must_change_password: bool = False
