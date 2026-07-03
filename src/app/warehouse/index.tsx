@@ -1,5 +1,5 @@
-import WarehouseDashboardScreen from "@/screens/warehouse/WarehouseDashboardScreen";
+import WarehouseNavigator from "@/navigation/WarehouseNavigator";
 
 export default function WarehouseDashboardPage() {
-  return <WarehouseDashboardScreen />;
+  return <WarehouseNavigator />;
 }
