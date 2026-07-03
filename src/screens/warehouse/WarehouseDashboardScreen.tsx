@@ -1,8 +1,20 @@
+import {
+  fetchWarehouseAvailableDrivers,
+  updateDriverAvailability,
+  type DriverAvailabilityStatus,
+  type WarehouseAvailableDriver,
+} from "@/api/backendClient";
 import type { WarehouseTab } from "@/components/warehouse/WarehouseBottomTabs";
 import { images } from "@/constants/images";
+import { sessionStore } from "@/store/sessionStore";
 import { StatusBar } from "expo-status-bar";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   Image,
+  Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -33,27 +45,33 @@ const WAREHOUSE = {
   id: "WH-2026-001",
   staff: "Warehouse User",
   location: "Billstraße 45, 20539 Hamburg",
-  today: "02 July 2026",
 };
 
+const WAREHOUSE_MAPS_URL =
+  "https://www.google.com/maps/search/?api=1&query=Billstraße%2045%2C%2020539%20Hamburg%2C%20Germany";
+
 const OVERVIEW = {
-  driversAvailable: "5",
   totalPackets: "1,240",
   returnsYesterday: "1,200",
 };
 
-const DRIVERS: {
-  initials: string;
-  color: string;
-  bg: string;
-  name: string;
-  zip: string;
-  carType: string;
-}[] = [
-  { initials: "AK", color: ORANGE, bg: "rgba(255,101,0,0.15)", name: "Ali Kaya", zip: "20099", carType: "Company car" },
-  { initials: "MO", color: BLUE, bg: "rgba(59,130,246,0.15)", name: "Mehmet Öztürk", zip: "22087", carType: "Own car" },
-  { initials: "SC", color: GREEN, bg: "rgba(34,197,94,0.15)", name: "Sara Chen", zip: "20355", carType: "Own car" },
+const DRIVER_AVATAR_COLORS: { color: string; bg: string }[] = [
+  { color: ORANGE, bg: "rgba(255,101,0,0.15)" },
+  { color: BLUE, bg: "rgba(59,130,246,0.15)" },
+  { color: GREEN, bg: "rgba(34,197,94,0.15)" },
 ];
+
+function getInitials(fullName?: string) {
+  if (!fullName) return "DR";
+  return (
+    fullName
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("") || "DR"
+  );
+}
 
 const ZIP_CODES: { zip: string; packets: number }[] = [
   { zip: "22111", packets: 240 },
@@ -166,25 +184,80 @@ function DocumentIcon({ size = 20, color = ORANGE }: { size?: number; color?: st
   );
 }
 
+function CloseIcon({ size = 18, color = WHITE }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M18 6 6 18M6 6l12 12" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function PhoneIcon({ size = 16, color = ORANGE }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+function ChatIcon({ size = 16, color = ORANGE }: { size?: number; color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 // ─── small building blocks ───────────────────────────────────────────────────
 function InfoItem({
   icon,
   label,
   value,
+  onPress,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  onPress?: () => void;
 }) {
-  return (
-    <View style={styles.infoItem}>
+  const content = (
+    <>
       <View style={styles.infoIconChip}>{icon}</View>
       <View style={styles.infoTextGroup}>
         <Text style={styles.infoLabel}>{label}</Text>
         <Text style={styles.infoValue}>{value}</Text>
       </View>
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <Pressable
+        style={({ pressed }) => [
+          styles.infoItem,
+          pressed && styles.infoItemPressed,
+        ]}
+        onPress={onPress}
+        hitSlop={4}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={styles.infoItem}>{content}</View>;
 }
 
 function WarehouseIconBadge() {
@@ -230,29 +303,88 @@ function OverviewCard({
   );
 }
 
+function DriverAvatar({
+  imageUrl,
+  fullName,
+  color,
+  bg,
+  size = 42,
+}: {
+  imageUrl: string | null;
+  fullName: string;
+  color: string;
+  bg: string;
+  size?: number;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  if (imageUrl && !imageFailed) {
+    return (
+      <Image
+        source={{ uri: imageUrl }}
+        style={{ width: size, height: size, borderRadius: size / 2 }}
+        resizeMode="cover"
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.driverAvatar,
+        { width: size, height: size, borderRadius: size / 2, backgroundColor: bg },
+      ]}
+    >
+      <Text style={[styles.driverInitials, { color, fontSize: size * 0.32 }]}>
+        {getInitials(fullName)}
+      </Text>
+    </View>
+  );
+}
+
 function DriverRow({
   driver,
+  color,
+  bg,
   isLast,
+  onPress,
 }: {
-  driver: (typeof DRIVERS)[number];
+  driver: WarehouseAvailableDriver;
+  color: string;
+  bg: string;
   isLast: boolean;
+  onPress: () => void;
 }) {
+  const availability = getAvailabilityBadge(driver.availability_status);
   return (
-    <View style={[styles.driverRow, !isLast && styles.rowDivider]}>
-      <View style={[styles.driverAvatar, { backgroundColor: driver.bg }]}>
-        <Text style={[styles.driverInitials, { color: driver.color }]}>{driver.initials}</Text>
-      </View>
+    <Pressable
+      style={({ pressed }) => [
+        styles.driverRow,
+        !isLast && styles.rowDivider,
+        pressed && styles.infoItemPressed,
+      ]}
+      onPress={onPress}
+    >
+      <DriverAvatar
+        imageUrl={driver.profile_image_url}
+        fullName={driver.full_name}
+        color={color}
+        bg={bg}
+      />
       <View style={styles.driverInfo}>
-        <Text style={styles.driverName}>{driver.name}</Text>
+        <Text style={styles.driverName}>{driver.full_name}</Text>
         <Text style={styles.driverMeta}>
-          Home ZIP {driver.zip} · {driver.carType}
+          Home ZIP {driver.postal_code ?? "—"} · {driver.driver_type_label}
         </Text>
       </View>
-      <View style={styles.readyBadge}>
-        <Text style={styles.readyBadgeText}>Ready</Text>
+      <View style={[styles.readyBadge, { backgroundColor: availability.bg }]}>
+        <Text style={[styles.readyBadgeText, { color: availability.color }]}>
+          {driver.availability_label}
+        </Text>
       </View>
       <ChevronRight size={16} color={ORANGE} />
-    </View>
+    </Pressable>
   );
 }
 
@@ -296,12 +428,338 @@ function ReturnRow({
   );
 }
 
+function getAvailabilityBadge(status?: string) {
+  if (status === "not_ready") {
+    return { label: "Not Ready", color: ORANGE, bg: "rgba(255,101,0,0.15)" };
+  }
+  return { label: "Ready", color: GREEN, bg: "rgba(34,197,94,0.15)" };
+}
+
+function normalizePhoneForWhatsApp(phone: string): string {
+  return phone.replace(/[^\d]/g, "");
+}
+
+function handleCallDriver(fullName: string, phone: string | null) {
+  if (!phone) {
+    Alert.alert("Phone number is not available.");
+    return;
+  }
+  Alert.alert("Call Driver?", `Do you want to call ${fullName} at ${phone}?`, [
+    { text: "Cancel", style: "cancel" },
+    {
+      text: "Call",
+      onPress: () => {
+        Linking.openURL(`tel:${phone}`).catch(() => {
+          Alert.alert("Unable to open phone app.");
+        });
+      },
+    },
+  ]);
+}
+
+function handleSendSms(fullName: string, phone: string) {
+  const body = encodeURIComponent(`Hello ${fullName}, this is GXS Warehouse.`);
+  Linking.openURL(`sms:${phone}?body=${body}`).catch(() => {
+    Alert.alert("Unable to open messages.");
+  });
+}
+
+function handleSendWhatsApp(fullName: string, phone: string) {
+  const whatsappPhone = normalizePhoneForWhatsApp(phone);
+  const text = encodeURIComponent(`Hello ${fullName}, this is GXS Warehouse.`);
+  const appUrl = `whatsapp://send?phone=${whatsappPhone}&text=${text}`;
+  const webUrl = `https://wa.me/${whatsappPhone}?text=${text}`;
+
+  Linking.openURL(appUrl).catch(() => {
+    Linking.openURL(webUrl).catch(() => {
+      Alert.alert("Unable to open WhatsApp.");
+    });
+  });
+}
+
+function handleMessageDriver(fullName: string, phone: string | null) {
+  if (!phone) {
+    Alert.alert("Phone number is not available.");
+    return;
+  }
+  Alert.alert("Send Message", undefined, [
+    { text: "SMS Message", onPress: () => handleSendSms(fullName, phone) },
+    { text: "WhatsApp", onPress: () => handleSendWhatsApp(fullName, phone) },
+    { text: "Cancel", style: "cancel" },
+  ]);
+}
+
+function DriverDetailsModal({
+  driver,
+  color,
+  bg,
+  onClose,
+  onSetReady,
+  onSetNotReady,
+  savingStatus,
+}: {
+  driver: WarehouseAvailableDriver | null;
+  color: string;
+  bg: string;
+  onClose: () => void;
+  onSetReady: () => void;
+  onSetNotReady: () => void;
+  savingStatus: DriverAvailabilityStatus | null;
+}) {
+  const visible = !!driver;
+  const availability = getAvailabilityBadge(driver?.availability_status);
+  const isSaving = savingStatus !== null;
+
+  const handleCall = () => {
+    if (!driver) return;
+    handleCallDriver(driver.full_name, driver.phone);
+  };
+
+  const handleMessage = () => {
+    if (!driver) return;
+    handleMessageDriver(driver.full_name, driver.phone);
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Pressable style={styles.modalCloseBtn} onPress={onClose} hitSlop={8}>
+            <CloseIcon size={18} color={WHITE} />
+          </Pressable>
+
+          {driver && (
+            <>
+              <View style={styles.modalTopSection}>
+                <View style={styles.avatarRing}>
+                  <DriverAvatar
+                    imageUrl={driver.profile_image_url}
+                    fullName={driver.full_name}
+                    color={color}
+                    bg={bg}
+                    size={92}
+                  />
+                  <View style={styles.onlineDot} />
+                </View>
+                <Text style={styles.modalDriverId}>
+                  Driver ID: {driver.external_driver_id ?? "—"}
+                </Text>
+                <View style={[styles.modalAvailabilityBadge, { backgroundColor: availability.bg }]}>
+                  <CheckCircleIcon size={13} color={availability.color} />
+                  <Text style={[styles.modalAvailabilityText, { color: availability.color }]}>
+                    {availability.label}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.modalActionsRow}>
+                <Pressable
+                  style={({ pressed }) => [styles.modalActionBtnBlue, pressed && styles.infoItemPressed]}
+                  onPress={handleCall}
+                >
+                  <PhoneIcon size={15} color={BLUE} />
+                  <Text style={[styles.modalActionText, { color: BLUE }]}>Call</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.modalActionBtnBlue, pressed && styles.infoItemPressed]}
+                  onPress={handleMessage}
+                >
+                  <ChatIcon size={15} color={BLUE} />
+                  <Text style={[styles.modalActionText, { color: BLUE }]}>Message</Text>
+                </Pressable>
+              </View>
+              <View style={[styles.modalActionsRow, { marginBottom: 0 }]}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.modalActionBtnOutlineGreen,
+                    pressed && styles.infoItemPressed,
+                    isSaving && styles.modalActionBtnDisabled,
+                  ]}
+                  onPress={onSetReady}
+                  disabled={isSaving}
+                >
+                  {savingStatus === "ready" ? (
+                    <ActivityIndicator size="small" color={GREEN} />
+                  ) : (
+                    <CheckCircleIcon size={15} color={GREEN} />
+                  )}
+                  <Text style={[styles.modalActionText, { color: GREEN }]}>Ready</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.modalActionBtnOutlineRed,
+                    pressed && styles.infoItemPressed,
+                    isSaving && styles.modalActionBtnDisabled,
+                  ]}
+                  onPress={onSetNotReady}
+                  disabled={isSaving}
+                >
+                  {savingStatus === "not_ready" ? (
+                    <ActivityIndicator size="small" color={RED} />
+                  ) : (
+                    <ClockIcon size={15} color={RED} />
+                  )}
+                  <Text style={[styles.modalActionText, { color: RED }]}>Not Ready</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── props ────────────────────────────────────────────────────────────────────
 interface Props {
   onNavigate?: (tab: WarehouseTab) => void;
 }
 
 export default function WarehouseDashboardScreen({ onNavigate }: Props) {
+  const todayLabel = new Date().toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+
+  const [drivers, setDrivers] = useState<WarehouseAvailableDriver[] | null>(null);
+  const [availableCount, setAvailableCount] = useState<number | null>(null);
+  const [driversLoading, setDriversLoading] = useState(true);
+  const [driversError, setDriversError] = useState<string | null>(null);
+  const [selectedDriver, setSelectedDriver] = useState<WarehouseAvailableDriver | null>(null);
+  const [selectedDriverColor, setSelectedDriverColor] = useState<{ color: string; bg: string }>(
+    DRIVER_AVATAR_COLORS[0]
+  );
+  const [availabilitySaving, setAvailabilitySaving] = useState<DriverAvailabilityStatus | null>(
+    null
+  );
+
+  const fetchAvailableDrivers = (accessToken: string) => {
+    fetchWarehouseAvailableDrivers(accessToken)
+      .then((data) => {
+        setDrivers(data.drivers);
+        const fallbackCount = data.drivers.filter(
+          (driver) => driver.availability_status !== "not_ready"
+        ).length;
+        setAvailableCount(data.summary?.available_drivers ?? fallbackCount);
+        setDriversLoading(false);
+      })
+      .catch(() => {
+        setDriversError("Unable to load available drivers.");
+        setDriversLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    const session = sessionStore.get();
+    if (session?.kind !== "warehouse") return;
+    fetchAvailableDrivers(session.access_token);
+  }, []);
+
+  const handleRetryDrivers = () => {
+    const session = sessionStore.get();
+    if (session?.kind !== "warehouse") return;
+    setDriversLoading(true);
+    setDriversError(null);
+    fetchAvailableDrivers(session.access_token);
+  };
+
+  const applyAvailabilityUpdate = (
+    driverAuthUserId: string,
+    status: DriverAvailabilityStatus,
+    label: string
+  ) => {
+    setDrivers((prev) =>
+      prev
+        ? prev.map((d) =>
+            d.auth_user_id === driverAuthUserId
+              ? { ...d, availability_status: status, availability_label: label }
+              : d
+          )
+        : prev
+    );
+    setSelectedDriver((prev) =>
+      prev && prev.auth_user_id === driverAuthUserId
+        ? { ...prev, availability_status: status, availability_label: label }
+        : prev
+    );
+  };
+
+  const handleUpdateAvailability = (status: DriverAvailabilityStatus) => {
+    if (!selectedDriver) return;
+    const session = sessionStore.get();
+    if (session?.kind !== "warehouse") return;
+
+    const driverAuthUserId = selectedDriver.auth_user_id;
+    const previousStatus = selectedDriver.availability_status;
+    setAvailabilitySaving(status);
+    updateDriverAvailability(session.access_token, driverAuthUserId, status)
+      .then((result) => {
+        applyAvailabilityUpdate(driverAuthUserId, result.status, result.label);
+        if (result.status !== previousStatus) {
+          setAvailableCount((prev) =>
+            prev === null ? prev : prev + (result.status === "ready" ? 1 : -1)
+          );
+        }
+        Alert.alert(
+          status === "ready" ? "Driver marked as Ready." : "Driver marked as Not Ready."
+        );
+      })
+      .catch((err) => {
+        Alert.alert(
+          err instanceof Error ? err.message : "Unable to update driver status. Please try again."
+        );
+      })
+      .finally(() => {
+        setAvailabilitySaving(null);
+      });
+  };
+
+  const handleSetReady = () => {
+    Alert.alert(
+      "Set driver as Ready?",
+      "This driver will appear as ready for today’s warehouse work.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Set Ready", onPress: () => handleUpdateAvailability("ready") },
+      ]
+    );
+  };
+
+  const handleSetNotReady = () => {
+    Alert.alert(
+      "Set driver as Not Ready?",
+      "This driver will not be used for today’s assignments unless changed back to Ready.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Set Not Ready", onPress: () => handleUpdateAvailability("not_ready") },
+      ]
+    );
+  };
+
+  const handleOpenLocation = () => {
+    Alert.alert(
+      "Open Warehouse Location?",
+      "Do you want to open Hamburg Main Warehouse in GPS?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Open GPS",
+          onPress: () => {
+            Linking.openURL(WAREHOUSE_MAPS_URL).catch(() => {
+              Alert.alert("Unable to open maps.");
+            });
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <>
       <StatusBar style="light" />
@@ -345,9 +803,14 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
             </View>
             <View style={styles.infoGrid}>
               <InfoItem icon={<ClipboardIcon />} label="Warehouse ID" value={WAREHOUSE.id} />
-              <InfoItem icon={<PinIcon />} label="Location" value={WAREHOUSE.location} />
+              <InfoItem
+                icon={<PinIcon />}
+                label="Location"
+                value={WAREHOUSE.location}
+                onPress={handleOpenLocation}
+              />
               <InfoItem icon={<PersonIcon />} label="Staff" value={WAREHOUSE.staff} />
-              <InfoItem icon={<CalendarIcon />} label="Today" value={WAREHOUSE.today} />
+              <InfoItem icon={<CalendarIcon />} label="Today" value={todayLabel} />
             </View>
           </View>
 
@@ -358,7 +821,7 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
               iconBg="rgba(59,130,246,0.15)"
               icon={<PinIcon size={20} color={BLUE} />}
               label="Drivers available"
-              value={OVERVIEW.driversAvailable}
+              value={driversLoading ? "—" : String(availableCount ?? 0)}
               subtitle="Today"
             />
             <OverviewCard
@@ -380,9 +843,41 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
           {/* ── Drivers available ────────────────────────────────────────── */}
           <Text style={styles.sectionLabel}>Drivers available</Text>
           <View style={styles.card}>
-            {DRIVERS.map((driver, i) => (
-              <DriverRow key={driver.name} driver={driver} isLast={i === DRIVERS.length - 1} />
-            ))}
+            {driversLoading ? (
+              <View style={styles.driversStateBox}>
+                <ActivityIndicator size="small" color={ORANGE} />
+                <Text style={styles.driversStateText}>Loading available drivers...</Text>
+              </View>
+            ) : driversError ? (
+              <View style={styles.driversStateBox}>
+                <Text style={styles.driversStateText}>{driversError}</Text>
+                <Pressable style={styles.retryBtn} onPress={handleRetryDrivers}>
+                  <Text style={styles.retryBtnText}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : !drivers || drivers.length === 0 ? (
+              <View style={styles.driversStateBox}>
+                <Text style={styles.driversStateText}>No available drivers found.</Text>
+                <Text style={styles.driversStateSubtitle}>Approved drivers will appear here.</Text>
+              </View>
+            ) : (
+              drivers.map((driver, i, arr) => {
+                const palette = DRIVER_AVATAR_COLORS[i % DRIVER_AVATAR_COLORS.length];
+                return (
+                  <DriverRow
+                    key={driver.id}
+                    driver={driver}
+                    color={palette.color}
+                    bg={palette.bg}
+                    isLast={i === arr.length - 1}
+                    onPress={() => {
+                      setSelectedDriver(driver);
+                      setSelectedDriverColor(palette);
+                    }}
+                  />
+                );
+              })
+            )}
           </View>
 
           {/* ── Driver's ZIP Code ────────────────────────────────────────── */}
@@ -450,6 +945,15 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
           </View>
         </ScrollView>
       </SafeAreaView>
+      <DriverDetailsModal
+        driver={selectedDriver}
+        color={selectedDriverColor.color}
+        bg={selectedDriverColor.bg}
+        onClose={() => setSelectedDriver(null)}
+        onSetReady={handleSetReady}
+        onSetNotReady={handleSetNotReady}
+        savingStatus={availabilitySaving}
+      />
     </>
   );
 }
@@ -628,6 +1132,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 10,
   },
+  infoItemPressed: {
+    opacity: 0.7,
+  },
   infoIconChip: {
     width: 30,
     height: 30,
@@ -709,6 +1216,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  driverAvatarImage: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+  },
   driverInitials: {
     fontFamily: "Poppins_700Bold",
     fontSize: 13,
@@ -735,6 +1247,37 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
     fontSize: 11,
     color: GREEN,
+  },
+  driversStateBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 24,
+  },
+  driversStateText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: DIM,
+    textAlign: "center",
+  },
+  driversStateSubtitle: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 11.5,
+    color: MUTED,
+    textAlign: "center",
+  },
+  retryBtn: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: "rgba(255,101,0,0.35)",
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  retryBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12,
+    color: ORANGE,
   },
 
   // ── ZIP cards
@@ -885,5 +1428,136 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: DIM,
     flexShrink: 1,
+  },
+
+  // ── Driver Details modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: CARD,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    padding: 24,
+    shadowColor: "#000",
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 20,
+  },
+  modalCloseBtn: {
+    position: "absolute",
+    top: 14,
+    left: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: INNER,
+    borderWidth: 1,
+    borderColor: BORDER,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  modalTopSection: {
+    alignItems: "center",
+    gap: 6,
+    marginTop: 14,
+    marginBottom: 22,
+  },
+  avatarRing: {
+    padding: 3,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: BLUE,
+    shadowColor: BLUE,
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  onlineDot: {
+    position: "absolute",
+    right: 2,
+    bottom: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: GREEN,
+    borderWidth: 3,
+    borderColor: CARD,
+  },
+  modalDriverId: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 13,
+    color: DIM,
+    marginTop: 10,
+  },
+  modalAvailabilityBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 10,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  modalAvailabilityText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+  },
+  modalActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 10,
+  },
+  modalActionBtnBlue: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    backgroundColor: "rgba(59,130,246,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(59,130,246,0.35)",
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  modalActionBtnOutlineGreen: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    backgroundColor: "transparent",
+    borderWidth: 1.3,
+    borderColor: GREEN,
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  modalActionBtnOutlineRed: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    backgroundColor: "transparent",
+    borderWidth: 1.3,
+    borderColor: RED,
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  modalActionText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 13,
+  },
+  modalActionBtnDisabled: {
+    opacity: 0.5,
   },
 });

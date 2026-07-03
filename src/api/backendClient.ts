@@ -1047,3 +1047,89 @@ export async function changePassword(
   }
   return data as { message: string };
 }
+
+// ── Warehouse Dashboard ─────────────────────────────────────────────────────────
+
+export type WarehouseAvailableDriver = {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  external_driver_id: string | null;
+  email: string | null;
+  phone: string | null;
+  car_type: string | null;
+  driver_type_label: string;
+  postal_code: string | null;
+  status: string;
+  availability_status: string;
+  availability_label: string;
+  profile_image_url: string | null;
+};
+
+export type WarehouseAvailableDriversResponse = {
+  drivers: WarehouseAvailableDriver[];
+  summary: {
+    available_drivers: number;
+  };
+};
+
+export async function fetchWarehouseAvailableDrivers(
+  accessToken: string,
+): Promise<WarehouseAvailableDriversResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/dashboard/available-drivers`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Unable to load available drivers."));
+  }
+  return data as WarehouseAvailableDriversResponse;
+}
+
+// ── Warehouse Driver Availability ─────────────────────────────────────────────
+
+export type DriverAvailabilityStatus = "ready" | "not_ready";
+
+export type UpdateDriverAvailabilityResponse = {
+  driver_auth_user_id: string;
+  availability_date: string;
+  status: DriverAvailabilityStatus;
+  label: string;
+};
+
+export async function updateDriverAvailability(
+  accessToken: string,
+  driverAuthUserId: string,
+  status: DriverAvailabilityStatus,
+): Promise<UpdateDriverAvailabilityResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/drivers/${encodeURIComponent(driverAuthUserId)}/availability`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ status }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Session expired. Please login again.");
+    }
+    if (res.status === 403) {
+      throw new Error("You are not allowed to update driver availability.");
+    }
+    if (res.status === 400) {
+      throw new Error("Invalid availability status.");
+    }
+    throw new Error(
+      extractErrorMessage(data, "Unable to update driver status. Please try again."),
+    );
+  }
+  return data as UpdateDriverAvailabilityResponse;
+}
