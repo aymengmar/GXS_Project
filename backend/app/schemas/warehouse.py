@@ -37,3 +37,41 @@ class DriverAvailabilityUpdateResponse(BaseModel):
     availability_date: str
     status: str
     label: str
+
+
+class WarehouseZipCodeItem(BaseModel):
+    id: str
+    zip_code: str
+    zip_date: str
+    status: str
+    status_label: str
+    packet_count: int
+    carried_over_packets: int
+    created_at: str
+    updated_at: str
+
+
+class WarehouseZipCodeCreateRequest(BaseModel):
+    zip_code: str
+
+
+class WarehouseZipCodeCreateResponse(WarehouseZipCodeItem):
+    pass
+
+
+class WarehouseZipCodeSummary(BaseModel):
+    total_zip_codes: int
+    validated: int
+    not_counted: int
+    in_progress: int
+    total_packets: int
+    carried_over_packets: int
+
+
+class WarehouseZipCodeListResponse(BaseModel):
+    summary: WarehouseZipCodeSummary
+    zip_codes: list[WarehouseZipCodeItem]
+
+
+class WarehouseZipCodeDeleteResponse(BaseModel):
+    message: str

@@ -1133,3 +1133,83 @@ export async function updateDriverAvailability(
   }
   return data as UpdateDriverAvailabilityResponse;
 }
+
+// ── Warehouse ZIP Count ───────────────────────────────────────────────────────
+
+export type WarehouseZipCodeStatus = "not_counted" | "in_progress" | "validated";
+
+export type WarehouseZipCodeItem = {
+  id: string;
+  zip_code: string;
+  zip_date: string;
+  status: WarehouseZipCodeStatus;
+  status_label: string;
+  packet_count: number;
+  carried_over_packets: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WarehouseZipCodeSummary = {
+  total_zip_codes: number;
+  validated: number;
+  not_counted: number;
+  in_progress: number;
+  total_packets: number;
+  carried_over_packets: number;
+};
+
+export type WarehouseZipCodeListResponse = {
+  summary: WarehouseZipCodeSummary;
+  zip_codes: WarehouseZipCodeItem[];
+};
+
+export async function fetchWarehouseZipCodes(
+  accessToken: string,
+): Promise<WarehouseZipCodeListResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/warehouse/zip-count/today`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Unable to load ZIP codes."));
+  }
+  return data as WarehouseZipCodeListResponse;
+}
+
+export async function addWarehouseZipCode(
+  accessToken: string,
+  zipCode: string,
+): Promise<WarehouseZipCodeItem> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/warehouse/zip-count/today`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ zip_code: zipCode }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Unable to add ZIP code. Please try again."));
+  }
+  return data as WarehouseZipCodeItem;
+}
+
+export async function deleteWarehouseZipCode(
+  accessToken: string,
+  zipId: string,
+): Promise<{ message: string }> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/zip-count/today/${encodeURIComponent(zipId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Unable to remove ZIP code."));
+  }
+  return data as { message: string };
+}
