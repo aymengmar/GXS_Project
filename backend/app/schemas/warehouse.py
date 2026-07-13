@@ -46,6 +46,7 @@ class WarehouseZipCodeItem(BaseModel):
     status: str
     status_label: str
     packet_count: int
+    manual_packet_count: Optional[int]
     carried_over_packets: int
     created_at: str
     updated_at: str
@@ -56,6 +57,18 @@ class WarehouseZipCodeCreateRequest(BaseModel):
 
 
 class WarehouseZipCodeCreateResponse(WarehouseZipCodeItem):
+    pass
+
+
+class WarehouseZipPacketCountUpdateRequest(BaseModel):
+    packet_count: int
+
+
+class WarehouseZipPacketCountUpdateResponse(WarehouseZipCodeItem):
+    pass
+
+
+class WarehouseZipValidateResponse(WarehouseZipCodeItem):
     pass
 
 

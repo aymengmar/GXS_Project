@@ -13,7 +13,11 @@ from app.schemas.warehouse import (
     WarehouseZipCodeItem,
     WarehouseZipCodeListResponse,
     WarehouseZipCodeSummary,
+    WarehouseZipPacketCountUpdateResponse,
+    WarehouseZipValidateResponse,
 )
+
+_MAX_PACKET_COUNT = 1_000_000
 
 _CAR_TYPE_LABEL: dict[str, str] = {
     "own_car": "Own car",
@@ -237,8 +241,8 @@ def update_driver_availability(
 
 def _to_zip_item(row: dict) -> WarehouseZipCodeItem:
     carried_over_packets = row.get("carried_over_packets") or 0
-    # For now packet_count = carried_over_packets. Later scanner logic will add counted_scan_packets.
-    packet_count = carried_over_packets
+    manual_packet_count = row.get("manual_packet_count")
+    packet_count = manual_packet_count if manual_packet_count is not None else carried_over_packets
     return WarehouseZipCodeItem(
         id=row["id"],
         zip_code=row["zip_code"],
@@ -246,6 +250,7 @@ def _to_zip_item(row: dict) -> WarehouseZipCodeItem:
         status=row["status"],
         status_label=_ZIP_STATUS_LABEL.get(row["status"], row["status"]),
         packet_count=packet_count,
+        manual_packet_count=manual_packet_count,
         carried_over_packets=carried_over_packets,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -300,7 +305,10 @@ def get_today_zip_codes(authorization: str) -> WarehouseZipCodeListResponse:
 
     result = (
         supabase_admin.table("warehouse_daily_zip_codes")
-        .select("id, zip_code, zip_date, status, carried_over_packets, created_at, updated_at")
+        .select(
+            "id, zip_code, zip_date, status, carried_over_packets, manual_packet_count, "
+            "created_at, updated_at"
+        )
         .eq("warehouse_auth_user_id", warehouse_auth_user_id)
         .eq("zip_date", today)
         .order("created_at", desc=False)
@@ -387,6 +395,104 @@ def add_zip_code(authorization: str, raw_zip_code: str) -> WarehouseZipCodeCreat
 
     row = insert_result.data[0]
     return WarehouseZipCodeCreateResponse(**_to_zip_item(row).model_dump())
+
+
+def update_zip_packet_count(
+    authorization: str, zip_id: str, packet_count: int
+) -> WarehouseZipPacketCountUpdateResponse:
+    warehouse_auth_user_id = _require_warehouse(authorization)
+    today = date.today().isoformat()
+
+    if packet_count < 0 or packet_count > _MAX_PACKET_COUNT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Packet count must be between 0 and {_MAX_PACKET_COUNT}.",
+        )
+
+    result = (
+        supabase_admin.table("warehouse_daily_zip_codes")
+        .select(
+            "id, warehouse_auth_user_id, zip_code, zip_date, status, carried_over_packets, "
+            "manual_packet_count, created_at, updated_at"
+        )
+        .eq("id", zip_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ZIP code not found.")
+
+    row = result.data[0]
+    if row["warehouse_auth_user_id"] != warehouse_auth_user_id or row["zip_date"] != today:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ZIP code not found.")
+
+    if row["status"] in ("not_counted", "validated"):
+        new_status = "in_progress"
+    else:
+        new_status = row["status"]
+
+    now = datetime.now(timezone.utc).isoformat()
+    update_result = (
+        supabase_admin.table("warehouse_daily_zip_codes")
+        .update(
+            {
+                "manual_packet_count": packet_count,
+                "status": new_status,
+                "updated_at": now,
+            }
+        )
+        .eq("id", zip_id)
+        .execute()
+    )
+
+    updated_row = update_result.data[0]
+    return WarehouseZipPacketCountUpdateResponse(**_to_zip_item(updated_row).model_dump())
+
+
+def validate_zip_code(authorization: str, zip_id: str) -> WarehouseZipValidateResponse:
+    warehouse_auth_user_id = _require_warehouse(authorization)
+    today = date.today().isoformat()
+
+    result = (
+        supabase_admin.table("warehouse_daily_zip_codes")
+        .select(
+            "id, warehouse_auth_user_id, zip_code, zip_date, status, carried_over_packets, "
+            "manual_packet_count, created_at, updated_at"
+        )
+        .eq("id", zip_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ZIP code not found.")
+
+    row = result.data[0]
+    if row["warehouse_auth_user_id"] != warehouse_auth_user_id or row["zip_date"] != today:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ZIP code not found.")
+
+    manual_packet_count = row.get("manual_packet_count")
+    carried_over_packets = row.get("carried_over_packets") or 0
+    packet_count = manual_packet_count if manual_packet_count is not None else carried_over_packets
+
+    if packet_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot validate ZIP with 0 packets.",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    update_result = (
+        supabase_admin.table("warehouse_daily_zip_codes")
+        .update(
+            {
+                "status": "validated",
+                "updated_at": now,
+            }
+        )
+        .eq("id", zip_id)
+        .execute()
+    )
+
+    updated_row = update_result.data[0]
+    return WarehouseZipValidateResponse(**_to_zip_item(updated_row).model_dump())
 
 
 def delete_zip_code(authorization: str, zip_id: str) -> WarehouseZipCodeDeleteResponse:

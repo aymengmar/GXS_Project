@@ -1213,3 +1213,66 @@ export async function deleteWarehouseZipCode(
   }
   return data as { message: string };
 }
+
+export async function updateWarehouseZipPacketCount(
+  accessToken: string,
+  zipId: string,
+  packetCount: number,
+): Promise<WarehouseZipCodeItem> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/zip-count/today/${encodeURIComponent(zipId)}/packet-count`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ packet_count: packetCount }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Session expired. Please login again.");
+    }
+    if (res.status === 403) {
+      throw new Error("You are not allowed to update this ZIP count.");
+    }
+    if (res.status === 404) {
+      throw new Error("Selected ZIP code was not found.");
+    }
+    throw new Error(
+      extractErrorMessage(data, "Unable to save packet count. Please try again."),
+    );
+  }
+  return data as WarehouseZipCodeItem;
+}
+
+export async function validateWarehouseZipCode(
+  accessToken: string,
+  zipId: string,
+): Promise<WarehouseZipCodeItem> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/zip-count/today/${encodeURIComponent(zipId)}/validate`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Session expired. Please login again.");
+    }
+    if (res.status === 403) {
+      throw new Error("You are not allowed to validate this ZIP.");
+    }
+    if (res.status === 404) {
+      throw new Error("Selected ZIP code was not found.");
+    }
+    throw new Error(
+      extractErrorMessage(data, "Unable to validate ZIP. Please try again."),
+    );
+  }
+  return data as WarehouseZipCodeItem;
+}

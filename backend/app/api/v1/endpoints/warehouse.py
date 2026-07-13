@@ -8,6 +8,9 @@ from app.schemas.warehouse import (
     WarehouseZipCodeCreateResponse,
     WarehouseZipCodeDeleteResponse,
     WarehouseZipCodeListResponse,
+    WarehouseZipPacketCountUpdateRequest,
+    WarehouseZipPacketCountUpdateResponse,
+    WarehouseZipValidateResponse,
 )
 from app.services.warehouse_service import (
     add_zip_code,
@@ -15,6 +18,8 @@ from app.services.warehouse_service import (
     get_available_drivers,
     get_today_zip_codes,
     update_driver_availability,
+    update_zip_packet_count,
+    validate_zip_code,
 )
 
 router = APIRouter()
@@ -52,6 +57,29 @@ def zip_count_add(
     authorization: str = Header(...),
 ) -> WarehouseZipCodeCreateResponse:
     return add_zip_code(authorization, body.zip_code)
+
+
+@router.patch(
+    "/zip-count/today/{zip_id}/packet-count",
+    response_model=WarehouseZipPacketCountUpdateResponse,
+)
+def zip_count_update_packet_count(
+    zip_id: str,
+    body: WarehouseZipPacketCountUpdateRequest,
+    authorization: str = Header(...),
+) -> WarehouseZipPacketCountUpdateResponse:
+    return update_zip_packet_count(authorization, zip_id, body.packet_count)
+
+
+@router.patch(
+    "/zip-count/today/{zip_id}/validate",
+    response_model=WarehouseZipValidateResponse,
+)
+def zip_count_validate(
+    zip_id: str,
+    authorization: str = Header(...),
+) -> WarehouseZipValidateResponse:
+    return validate_zip_code(authorization, zip_id)
 
 
 @router.delete("/zip-count/today/{zip_id}", response_model=WarehouseZipCodeDeleteResponse)

@@ -2,15 +2,19 @@ import {
   addWarehouseZipCode,
   deleteWarehouseZipCode,
   fetchWarehouseZipCodes,
+  updateWarehouseZipPacketCount,
+  validateWarehouseZipCode,
   type WarehouseZipCodeItem,
   type WarehouseZipCodeSummary,
 } from "@/api/backendClient";
 import { sessionStore } from "@/store/sessionStore";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -45,6 +49,43 @@ function confirmRemoveZip(zip: string, onConfirm: () => void) {
   }
 }
 
+function confirmUpdatePacketCount(
+  zip: string,
+  oldCount: number,
+  newCount: number,
+  onConfirm: () => void,
+) {
+  const title = "Update Packet Count?";
+  const message = `Change ZIP ${zip} from ${oldCount} packets to ${newCount} packets?`;
+  if (Platform.OS === "web") {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+  } else {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Update", onPress: onConfirm },
+    ]);
+  }
+}
+
+function confirmValidateZips(entries: ZipEntry[], onConfirm: () => void) {
+  const title = "Validate ZIP?";
+  const totalPackets = entries.reduce((sum, e) => sum + e.packets, 0);
+  const message =
+    entries.length === 1
+      ? `Validate ZIP ${entries[0].zip} with ${formatNumber(totalPackets)} packets?`
+      : `Validate ${entries.length} ZIP codes (${entries
+          .map((e) => e.zip)
+          .join(", ")}) with ${formatNumber(totalPackets)} packets total?`;
+  if (Platform.OS === "web") {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+  } else {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Validate", onPress: onConfirm },
+    ]);
+  }
+}
+
 // ─── palette ────────────────────────────────────────────────────────────────
 const BG = "#080F1D";
 const CARD = "#0D1A2E";
@@ -65,6 +106,16 @@ function formatNumber(n: number): string {
 
 function placeholderAlert(title: string, message?: string) {
   Alert.alert(title, message);
+}
+
+function formatScanTime() {
+  const now = new Date();
+
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+
+  return `${hours}:${minutes}:${seconds}`;
 }
 
 // ─── static data (frontend UI only) ──────────────────────────────────────────
@@ -244,6 +295,46 @@ function CloseIcon({
   );
 }
 
+function CheckMarkIcon({
+  size = 11,
+  color = WHITE,
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Polyline
+        points="20 6 9 17 4 12"
+        stroke={color}
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+function ChevronDownIcon({
+  size = 14,
+  color = ORANGE,
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Polyline
+        points="6 9 12 15 18 9"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 function BoxIcon({
   size = 16,
   color = ORANGE,
@@ -262,27 +353,6 @@ function BoxIcon({
       />
       <Path
         d="M3 8l9 5 9-5M12 13v8"
-        stroke={color}
-        strokeWidth={1.8}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
-function ClockIcon({
-  size = 14,
-  color = ORANGE,
-}: {
-  size?: number;
-  color?: string;
-}) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx="12" cy="12" r="9" stroke={color} strokeWidth={1.8} />
-      <Polyline
-        points="12 7 12 12 15 14"
         stroke={color}
         strokeWidth={1.8}
         strokeLinecap="round"
@@ -495,32 +565,6 @@ function KeyboardIcon({
   );
 }
 
-function GaugeIcon({
-  size = 14,
-  color = ORANGE,
-}: {
-  size?: number;
-  color?: string;
-}) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M4 15a8 8 0 1 1 16 0"
-        stroke={color}
-        strokeWidth={1.8}
-        strokeLinecap="round"
-      />
-      <Path
-        d="M12 15l4-5"
-        stroke={color}
-        strokeWidth={1.8}
-        strokeLinecap="round"
-      />
-      <Circle cx="12" cy="15" r="1.3" fill={color} />
-    </Svg>
-  );
-}
-
 function DuplicateIcon({
   size = 14,
   color = ORANGE,
@@ -673,7 +717,11 @@ function ZipCountCard({ entry }: { entry: ZipEntry }) {
         {formatNumber(entry.packets)} packets
       </Text>
       <StatusBadge status={entry.status} />
-      {entry.carriedOverPackets > 0 && <CarriedOverBadge />}
+      {/* Always reserve this row's space so every card is the same height,
+          whether or not it carries a "Carried over" badge. */}
+      <View style={{ opacity: entry.carriedOverPackets > 0 ? 1 : 0 }}>
+        <CarriedOverBadge />
+      </View>
     </View>
   );
 }
@@ -686,7 +734,7 @@ function ZipChip({
   onRemove: () => void;
 }) {
   const meta = STATUS_META[entry.status];
-  const isLocked = entry.carriedOverPackets > 0;
+  const isLocked = entry.carriedOverPackets > 0 || entry.status === "validated";
   return (
     <View style={styles.zipChip}>
       <View style={styles.zipChipTopRow}>
@@ -716,21 +764,24 @@ function ZipChip({
 function ZipListRow({
   entry,
   isLast,
-  isSelected,
-  onSelect,
+  checked,
+  onToggleCheck,
 }: {
   entry: ZipEntry;
   isLast: boolean;
-  isSelected: boolean;
-  onSelect: () => void;
+  checked: boolean;
+  onToggleCheck: () => void;
 }) {
+  // Only fully validated ZIPs are locked. Carried-over and in-progress
+  // ZIPs still have packets that need validating, so they stay checkable
+  // just like a fresh not_counted ZIP.
   const isLocked = entry.status === "validated";
   return (
     <View
       style={[
         styles.zipListRow,
         !isLast && styles.rowDivider,
-        isSelected && styles.zipListRowSelected,
+        checked && styles.zipListRowSelected,
       ]}
     >
       <View style={styles.zipListTopRow}>
@@ -762,17 +813,13 @@ function ZipListRow({
           </Pressable>
         ) : (
           <Pressable
-            style={[styles.selectBtn, isSelected && styles.selectBtnActive]}
-            onPress={onSelect}
+            style={styles.checkboxHit}
+            onPress={onToggleCheck}
+            hitSlop={8}
           >
-            <Text
-              style={[
-                styles.selectBtnText,
-                isSelected && styles.selectBtnTextActive,
-              ]}
-            >
-              {isSelected ? "Selected" : "Select"}
-            </Text>
+            <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+              {checked && <CheckMarkIcon size={11} color={WHITE} />}
+            </View>
           </Pressable>
         )}
       </View>
@@ -807,6 +854,526 @@ function IntakeScanRow({
   );
 }
 
+function ZipPickerModal({
+  visible,
+  entries,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  entries: ZipEntry[];
+  selectedId: string | null;
+  onSelect: (entry: ZipEntry) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.pickerSheet}>
+          <View style={styles.sheetHeaderRow}>
+            <Text style={styles.sheetTitle}>Select ZIP to Count</Text>
+            <Pressable hitSlop={14} onPress={onClose}>
+              <CloseIcon size={16} />
+            </Pressable>
+          </View>
+          <Text style={styles.pickerSubtitle}>
+            Validated and carried-over ZIP codes can’t be selected.
+          </Text>
+
+          {entries.length === 0 ? (
+            <View style={styles.pickerEmpty}>
+              <Text style={styles.pickerEmptyText}>
+                No ZIP codes available to select.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.pickerList}
+              showsVerticalScrollIndicator={false}
+            >
+              {entries.map((entry) => {
+                const isSelected = entry.id === selectedId;
+                return (
+                  <Pressable
+                    key={entry.id}
+                    style={[
+                      styles.pickerRow,
+                      isSelected && styles.pickerRowSelected,
+                    ]}
+                    onPress={() => onSelect(entry)}
+                  >
+                    <View style={styles.pickerRowLeft}>
+                      <PinIcon size={14} />
+                      <Text style={styles.pickerZipText}>ZIP {entry.zip}</Text>
+                    </View>
+                    <Text style={styles.pickerPacketsText}>
+                      {formatNumber(entry.packets)} packets
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function isValidPacketCount(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) return null;
+  const num = Number(trimmed);
+  if (!Number.isInteger(num) || num < 0 || num > 1000000) return null;
+  return num;
+}
+
+function ManualPacketCountModal({
+  visible,
+  zip,
+  currentCount,
+  saving,
+  onSave,
+  onClose,
+}: {
+  visible: boolean;
+  zip: string | null;
+  currentCount: number;
+  saving: boolean;
+  onSave: (packetCount: number) => void;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(
+    currentCount > 0 ? String(currentCount) : "",
+  );
+  const [error, setError] = useState("");
+
+  const handleSave = () => {
+    const num = isValidPacketCount(value);
+    if (num == null) {
+      setError("Please enter a valid packet count.");
+      return;
+    }
+    setError("");
+    onSave(num);
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={styles.manualSheet}>
+          <View style={styles.sheetHeaderRow}>
+            <Text style={styles.sheetTitle}>Manual Packet Count</Text>
+            <Pressable hitSlop={14} onPress={onClose} disabled={saving}>
+              <CloseIcon size={16} />
+            </Pressable>
+          </View>
+          <Text style={styles.pickerSubtitle}>
+            Enter packet count for ZIP {zip ?? "—"}
+          </Text>
+
+          <View style={styles.manualZipBadge}>
+            <View style={styles.manualZipIconRing}>
+              <PinIcon size={16} color={ORANGE} />
+            </View>
+            <View>
+              <Text style={styles.manualZipBadgeLabel}>ZIP Code</Text>
+              <Text style={styles.manualZipBadgeText}>
+                ZIP {zip ?? "Not selected"}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.fieldLabel}>Number of packets</Text>
+          <TextInput
+            style={[styles.manualInput, !!error && styles.inputError]}
+            placeholder="Enter packet count"
+            placeholderTextColor={MUTED}
+            selectionColor={ORANGE}
+            keyboardType="numeric"
+            value={value}
+            onChangeText={(text) => {
+              setValue(text);
+              if (error) setError("");
+            }}
+            editable={!saving}
+            autoFocus
+          />
+          {!!error && <Text style={styles.errorText}>{error}</Text>}
+
+          <View style={styles.manualButtonsRow}>
+            <Pressable
+              style={styles.cancelBtn}
+              onPress={onClose}
+              disabled={saving}
+            >
+              <Text style={styles.cancelBtnText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.manualSaveBtn,
+                saving && styles.manualSaveBtnDisabled,
+              ]}
+              onPress={handleSave}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color={WHITE} />
+              ) : (
+                <>
+                  <BoxIcon size={15} color={WHITE} />
+                  <Text style={styles.manualConfirmBtnText}>Save Count</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+type ScanResult = "success" | "exception" | "unknown";
+
+function PacketCountedModal({
+  visible,
+  zip,
+  time,
+  onClose,
+}: {
+  visible: boolean;
+  zip: string | null;
+  time: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={styles.confirmIconRing}>
+            <CheckCircleIcon size={30} color={GREEN} />
+          </View>
+          <Text style={styles.confirmTitle}>Packet Counted</Text>
+          <Text style={styles.confirmMessage} numberOfLines={1}>
+            Packet counted for ZIP {zip ?? "—"}
+          </Text>
+          <Text style={styles.confirmTime}>{time ?? "--:--:--"}</Text>
+          <Pressable style={styles.confirmCloseBtn} onPress={onClose}>
+            <Text style={styles.confirmCloseBtnText}>OK</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ZipValidatedModal({
+  visible,
+  title,
+  message,
+  onClose,
+}: {
+  visible: boolean;
+  title: string;
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.confirmOverlay}>
+        <View style={styles.confirmCard}>
+          <View style={styles.confirmIconRing}>
+            <CheckCircleIcon size={30} color={GREEN} />
+          </View>
+          <Text style={styles.confirmTitle}>{title}</Text>
+          <Text style={styles.validatedMessage}>{message}</Text>
+          <Pressable style={styles.confirmCloseBtn} onPress={onClose}>
+            <Text style={styles.confirmCloseBtnText}>Done</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ContinuousScanModal({
+  visible,
+  zip,
+  isActive,
+  inputValue,
+  onChangeInput,
+  onScan,
+  onToggleActive,
+  onClose,
+  lastScannedValue,
+  lastScanResult,
+  lastScanMessage,
+  lastScanTime,
+  lastCountedZip,
+  scanCount,
+  exceptionCount,
+}: {
+  visible: boolean;
+  zip: string | null;
+  isActive: boolean;
+  inputValue: string;
+  onChangeInput: (text: string) => void;
+  onScan: (value: string) => void;
+  onToggleActive: () => void;
+  onClose: () => void;
+  lastScannedValue: string | null;
+  lastScanResult: ScanResult | null;
+  lastScanMessage: string | null;
+  lastScanTime: string | null;
+  lastCountedZip: string | null;
+  scanCount: number;
+  exceptionCount: number;
+}) {
+  const inputRef = useRef<TextInput>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Focus the hidden text field whenever the modal opens or scanning resumes,
+  // since the hardware scanner only "types" into whatever field is focused.
+  useEffect(() => {
+    if (!visible || !isActive) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [visible, isActive]);
+
+  // Most scanners suffix a barcode with Enter, but some don't — fall back to
+  // processing after a short pause so a scan is never silently dropped.
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!visible || !isActive || !inputValue.trim()) return;
+    debounceRef.current = setTimeout(() => onScan(inputValue), 200);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [inputValue, visible, isActive, onScan]);
+
+  const handleSubmitEditing = () => {
+    if (inputValue.trim()) onScan(inputValue);
+  };
+
+  const handleManualRegisterPress = () => {
+    if (inputValue.trim()) {
+      onScan(inputValue);
+    } else {
+      notify("Please scan or enter a barcode first.");
+    }
+  };
+
+  const bannerMeta =
+    lastScanResult === "success"
+      ? {
+          bg: "rgba(34,197,94,0.15)",
+          border: "rgba(34,197,94,0.4)",
+          color: GREEN,
+        }
+      : lastScanResult === "exception"
+        ? {
+            bg: "rgba(255,101,0,0.15)",
+            border: "rgba(255,101,0,0.4)",
+            color: ORANGE,
+          }
+        : { bg: INNER, border: BORDER, color: DIM };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+      presentationStyle="pageSheet"
+    >
+      <SafeAreaView style={styles.scannerRoot} edges={["top", "bottom"]}>
+        <ScrollView
+          contentContainerStyle={styles.scannerContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.scannerHeaderRow}>
+            <View style={styles.scannerHeaderTextGroup}>
+              <Text style={styles.scannerTitle}>Continuous ZIP Scan</Text>
+              <Text style={styles.scannerSubtitle}>
+                Scan packets for ZIP {zip ?? "—"}
+              </Text>
+            </View>
+            <Pressable
+              style={styles.scannerCloseIconBtn}
+              onPress={onClose}
+              hitSlop={10}
+            >
+              <CloseIcon size={16} />
+            </Pressable>
+          </View>
+
+          <View style={styles.scannerZipRow}>
+            <View style={styles.scannerZipLeft}>
+              <PinIcon size={14} />
+              <Text style={styles.scannerZipText}>
+                Current ZIP: {zip ?? "—"}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.scannerActiveBadge,
+                {
+                  backgroundColor: isActive
+                    ? "rgba(255,101,0,0.15)"
+                    : INNER,
+                  borderColor: isActive ? "rgba(255,101,0,0.4)" : BORDER,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.scannerActiveDot,
+                  { backgroundColor: isActive ? ORANGE : MUTED },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.scannerActiveBadgeText,
+                  { color: isActive ? ORANGE : DIM },
+                ]}
+              >
+                {isActive ? "Scanner Active" : "Paused"}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.scannerStatusText}>
+            {isActive ? "Ready for next barcode" : "Scanning paused"}
+          </Text>
+
+          <View style={styles.scannerFrame}>
+            <ScanIcon size={48} color={ORANGE} />
+          </View>
+
+          <TextInput
+            ref={inputRef}
+            style={styles.scannerInputField}
+            placeholder="Waiting for hardware scan..."
+            placeholderTextColor={MUTED}
+            selectionColor={ORANGE}
+            value={inputValue}
+            onChangeText={onChangeInput}
+            onSubmitEditing={handleSubmitEditing}
+            editable={isActive}
+            autoFocus
+            blurOnSubmit={false}
+          />
+          <Text style={styles.scannerHelperText}>
+            Press the scanner button on your device. The barcode will be
+            captured automatically.
+          </Text>
+
+          {lastScanResult != null && (
+            <View
+              style={[
+                styles.scannerResultBanner,
+                {
+                  backgroundColor: bannerMeta.bg,
+                  borderColor: bannerMeta.border,
+                },
+              ]}
+            >
+              {lastScanResult === "success" ? (
+                <CheckCircleIcon size={16} color={bannerMeta.color} />
+              ) : (
+                <WarningIcon size={16} color={bannerMeta.color} />
+              )}
+              <View style={styles.successBannerTextGroup}>
+                <Text
+                  style={[styles.successBannerText, { color: bannerMeta.color }]}
+                >
+                  {lastScanResult === "success"
+                    ? `Packet counted for ${lastCountedZip ?? ""}`
+                    : lastScanMessage}
+                </Text>
+                {lastScanResult === "success" && (
+                  <Text style={styles.successBannerSubText}>
+                    Matching packet. Counted successfully.
+                  </Text>
+                )}
+              </View>
+              <Text
+                style={[styles.successBannerTime, { color: bannerMeta.color }]}
+              >
+                {lastScanTime}
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.scannerStatsRow}>
+            <View style={styles.scannerStatBox}>
+              <Text style={styles.scannerStatValue}>{scanCount}</Text>
+              <Text style={styles.scannerStatLabel}>Scanned this session</Text>
+            </View>
+            <View style={styles.scannerStatBox}>
+              <Text style={styles.scannerStatValue}>{exceptionCount}</Text>
+              <Text style={styles.scannerStatLabel}>Exceptions</Text>
+            </View>
+            <View style={[styles.scannerStatBox, styles.scannerStatBoxFull]}>
+              <Text style={styles.scannerStatValue} numberOfLines={1}>
+                {lastScannedValue ?? "None"}
+              </Text>
+              <Text style={styles.scannerStatLabel}>Last scanned</Text>
+            </View>
+          </View>
+
+          <View style={styles.scannerButtonsRow}>
+            <Pressable style={styles.scannerPauseBtn} onPress={onToggleActive}>
+              {isActive ? <PauseIcon /> : <PlayIcon />}
+              <Text style={styles.scannerPauseBtnText}>
+                {isActive ? "Pause Scan" : "Resume Scan"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.scannerManualBtn}
+              onPress={handleManualRegisterPress}
+            >
+              <KeyboardIcon size={13} color={ORANGE} />
+              <Text style={styles.scannerManualBtnText}>Manual Register</Text>
+            </Pressable>
+          </View>
+          <Pressable style={styles.scannerCloseBtn} onPress={onClose}>
+            <Text style={styles.scannerCloseBtnText}>Close</Text>
+          </Pressable>
+
+          <Text style={styles.scannerBottomText}>
+            Each scan is processed automatically.
+          </Text>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 // ─── screen ───────────────────────────────────────────────────────────────────
 export default function WarehouseZipCountScreen() {
   const [zipItems, setZipItems] = useState<WarehouseZipCodeItem[]>([]);
@@ -819,8 +1386,35 @@ export default function WarehouseZipCountScreen() {
   const [addingZip, setAddingZip] = useState(false);
   const [mode, setMode] = useState<CountMode>("zipCount");
   const [selectedZip, setSelectedZip] = useState<string | null>(null);
-  const [scanInput, setScanInput] = useState("");
+  const [checkedZipIds, setCheckedZipIds] = useState<Set<string>>(new Set());
   const [isScanning, setIsScanning] = useState(false);
+  const [zipPickerVisible, setZipPickerVisible] = useState(false);
+  const [manualRegisterVisible, setManualRegisterVisible] = useState(false);
+  const [manualRegisterKey, setManualRegisterKey] = useState(0);
+  const [manualRegisterSaving, setManualRegisterSaving] = useState(false);
+
+  const [validatingZips, setValidatingZips] = useState(false);
+  const [zipValidatedModalVisible, setZipValidatedModalVisible] = useState(false);
+  const [validatedSummary, setValidatedSummary] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
+
+  const [isScannerModalVisible, setIsScannerModalVisible] = useState(false);
+  const [isScannerActive, setIsScannerActive] = useState(false);
+  const [scannerInput, setScannerInput] = useState("");
+  const [lastScannedValue, setLastScannedValue] = useState<string | null>(
+    null,
+  );
+  const [lastScanResult, setLastScanResult] = useState<ScanResult | null>(
+    null,
+  );
+  const [lastScanMessage, setLastScanMessage] = useState<string | null>(null);
+  const [lastScanTime, setLastScanTime] = useState<string | null>(null);
+  const [lastCountedZip, setLastCountedZip] = useState<string | null>(null);
+  const [packetConfirmVisible, setPacketConfirmVisible] = useState(false);
+  const [scanCountInSession, setScanCountInSession] = useState(0);
+  const [exceptionCountInSession, setExceptionCountInSession] = useState(0);
 
   const [barcodeInput, setBarcodeInput] = useState("");
   const [isIntakeScanning, setIsIntakeScanning] = useState(false);
@@ -837,7 +1431,28 @@ export default function WarehouseZipCountScreen() {
     [zipItems],
   );
 
+  // selectedZip drives the "Current ZIP" scan/manual-register workflow and
+  // is only ever set via the ZIP picker modal (handlePickZipFromModal),
+  // which restricts it to non-validated, non-carried-over ZIPs.
   const currentEntry = zipEntries.find((z) => z.id === selectedZip) ?? null;
+
+  // ZIPs eligible for the Today's ZIP List checkboxes / bulk validation —
+  // anything not already validated, matching ZipListRow's own lock rule.
+  const validatableEntries = useMemo(
+    () => zipEntries.filter((entry) => entry.status !== "validated"),
+    [zipEntries],
+  );
+
+  // ZIPs eligible for the Current ZIP picker — carried-over ZIPs already
+  // have inventory from previous work and shouldn't be offered here.
+  const pickableEntries = useMemo(
+    () =>
+      validatableEntries.filter((entry) => entry.carriedOverPackets === 0),
+    [validatableEntries],
+  );
+  const allChecked =
+    validatableEntries.length > 0 &&
+    validatableEntries.every((entry) => checkedZipIds.has(entry.id));
 
   const loadZipCodes = useCallback((accessToken: string) => {
     return fetchWarehouseZipCodes(accessToken)
@@ -859,6 +1474,13 @@ export default function WarehouseZipCountScreen() {
     if (session?.kind !== "warehouse") return;
     loadZipCodes(session.access_token);
   }, [loadZipCodes]);
+
+  // Auto-dismiss the confirmation popup so it never blocks fast, repeated scanning.
+  useEffect(() => {
+    if (!packetConfirmVisible) return;
+    const t = setTimeout(() => setPacketConfirmVisible(false), 1500);
+    return () => clearTimeout(t);
+  }, [packetConfirmVisible, lastScanTime]);
 
   const handleRetryZipCodes = () => {
     const session = sessionStore.get();
@@ -902,6 +1524,12 @@ export default function WarehouseZipCountScreen() {
     deleteWarehouseZipCode(session.access_token, entry.id)
       .then(() => {
         if (selectedZip === entry.id) setSelectedZip(null);
+        setCheckedZipIds((prev) => {
+          if (!prev.has(entry.id)) return prev;
+          const next = new Set(prev);
+          next.delete(entry.id);
+          return next;
+        });
         return loadZipCodes(session.access_token).then(() => {
           notify("ZIP code removed.");
         });
@@ -917,21 +1545,148 @@ export default function WarehouseZipCountScreen() {
     confirmRemoveZip(entry.zip, () => performRemoveZip(entry));
   };
 
-  const handleSelectZip = (entry: ZipEntry) => {
+  const handleToggleCheckZip = (entry: ZipEntry) => {
     if (entry.status === "validated") return;
-    setSelectedZip((prev) => (prev === entry.id ? null : entry.id));
+    setCheckedZipIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(entry.id)) next.delete(entry.id);
+      else next.add(entry.id);
+      return next;
+    });
   };
 
-  const handleToggleScan = () => {
-    if (!selectedZip) {
+  const handleToggleSelectAll = () => {
+    setCheckedZipIds(
+      allChecked ? new Set() : new Set(validatableEntries.map((e) => e.id)),
+    );
+  };
+
+  const handleOpenZipPicker = () => {
+    if (pickableEntries.length === 0) {
       placeholderAlert(
-        "Select a ZIP code",
-        "Choose a ZIP from the list below before starting the scan.",
+        "No ZIP codes available",
+        "There are no ZIP codes to select right now.",
       );
       return;
     }
-    setIsScanning((prev) => !prev);
-    setScanInput("");
+    setZipPickerVisible(true);
+  };
+
+  const handlePickZipFromModal = (entry: ZipEntry) => {
+    if (entry.status === "validated" || entry.carriedOverPackets > 0) return;
+    setSelectedZip(entry.id);
+    setZipPickerVisible(false);
+  };
+
+  const handleScannedValue = useCallback(
+    (rawValue: string) => {
+      const trimmed = rawValue.trim();
+      if (!trimmed) return;
+
+      setScannerInput("");
+      setLastScannedValue(trimmed);
+      setLastScanTime(formatScanTime());
+
+      const zip = currentEntry?.zip ?? "";
+      if (!/^\d+$/.test(trimmed)) {
+        setLastScanResult("unknown");
+        setLastScanMessage(
+          "Barcode scanned. ZIP lookup will be connected later.",
+        );
+        return;
+      }
+
+      if (trimmed === zip) {
+        setLastScanResult("success");
+        setLastScanMessage(`Packet counted for ${zip}`);
+        setLastCountedZip(zip);
+        setScanCountInSession((c) => c + 1);
+        setPacketConfirmVisible(true);
+      } else {
+        setLastScanResult("exception");
+        setLastScanMessage(
+          `ZIP Exception detected. Scanned ZIP ${trimmed} does not match current ZIP ${zip}.`,
+        );
+        setExceptionCountInSession((c) => c + 1);
+      }
+    },
+    [currentEntry],
+  );
+
+  const handleStartScannerModal = () => {
+    if (!currentEntry) {
+      notify("Please select a Not counted ZIP first.");
+      return;
+    }
+    setScannerInput("");
+    setLastScannedValue(null);
+    setLastScanResult(null);
+    setLastScanMessage(null);
+    setLastScanTime(null);
+    setLastCountedZip(null);
+    setPacketConfirmVisible(false);
+    setScanCountInSession(0);
+    setExceptionCountInSession(0);
+    setIsScannerActive(true);
+    setIsScannerModalVisible(true);
+    setIsScanning(true);
+  };
+
+  const handleToggleScannerActive = () => {
+    setIsScannerActive((prev) => !prev);
+  };
+
+  const handleCloseScannerModal = () => {
+    setIsScannerModalVisible(false);
+    setIsScannerActive(false);
+    setScannerInput("");
+    setIsScanning(false);
+  };
+
+  const handleOpenManualRegister = () => {
+    if (!currentEntry) {
+      notify("Please select a ZIP code first.");
+      return;
+    }
+    setManualRegisterKey((k) => k + 1);
+    setManualRegisterVisible(true);
+  };
+
+  const handleManualPacketCountSave = (packetCount: number) => {
+    if (!currentEntry) return;
+    const zipId = currentEntry.id;
+    const zip = currentEntry.zip;
+    const previousCount = currentEntry.packets;
+
+    const commit = () => {
+      const session = sessionStore.get();
+      if (session?.kind !== "warehouse") return;
+      setManualRegisterSaving(true);
+      updateWarehouseZipPacketCount(session.access_token, zipId, packetCount)
+        .then(() => loadZipCodes(session.access_token))
+        .then(() => {
+          setManualRegisterVisible(false);
+          setLastScanResult("success");
+          setLastScanMessage(`Packet counted for ${zip}`);
+          setLastScanTime(formatScanTime());
+          setLastCountedZip(zip);
+          setPacketConfirmVisible(true);
+        })
+        .catch((err) => {
+          notify(
+            err instanceof Error
+              ? err.message
+              : "Unable to save packet count. Please try again.",
+          );
+        })
+        .finally(() => setManualRegisterSaving(false));
+    };
+
+    if (previousCount > 0 && packetCount !== previousCount) {
+      confirmUpdatePacketCount(zip, previousCount, packetCount, commit);
+    } else {
+      commit();
+    }
   };
 
   const handleCancel = () => {
@@ -939,22 +1694,60 @@ export default function WarehouseZipCountScreen() {
     placeholderAlert("Cancelled", "No changes were made.");
   };
 
-  const handleValidateZip = () => {
-    if (!selectedZip) {
+  const performValidateSelectedZips = async (entries: ZipEntry[]) => {
+    const session = sessionStore.get();
+    if (session?.kind !== "warehouse") return;
+
+    setValidatingZips(true);
+    try {
+      for (const entry of entries) {
+        await validateWarehouseZipCode(session.access_token, entry.id);
+      }
+      await loadZipCodes(session.access_token);
+      setCheckedZipIds(new Set());
+      setIsScanning(false);
+
+      const totalPackets = entries.reduce((sum, e) => sum + e.packets, 0);
+      setValidatedSummary(
+        entries.length === 1
+          ? {
+              title: "ZIP Validated Successfully!",
+              message: `ZIP ${entries[0].zip} has been validated with ${formatNumber(totalPackets)} packets.`,
+            }
+          : {
+              title: "ZIPs Validated Successfully!",
+              message: `${entries.length} ZIP codes have been validated with ${formatNumber(totalPackets)} packets in total.`,
+            },
+      );
+      setZipValidatedModalVisible(true);
+    } catch (err) {
+      notify(
+        err instanceof Error
+          ? err.message
+          : "Unable to validate ZIP. Please try again.",
+      );
+    } finally {
+      setValidatingZips(false);
+    }
+  };
+
+  const handleValidateSelectedZips = () => {
+    if (checkedZipIds.size === 0) {
       placeholderAlert(
-        "Select a ZIP code",
-        "Choose a ZIP from the list below to validate it.",
+        "Select ZIP codes",
+        "Check at least one ZIP from the list below to validate it.",
       );
       return;
     }
-    // Not connected yet — the validate endpoint is out of scope for this screen.
-    setZipItems((prev) =>
-      prev.map((z) =>
-        z.id === selectedZip ? { ...z, status: "validated" } : z,
-      ),
+    const entries = validatableEntries.filter((entry) =>
+      checkedZipIds.has(entry.id),
     );
-    setSelectedZip(null);
-    setIsScanning(false);
+    const zeroPacketEntry = entries.find((entry) => entry.packets === 0);
+    if (zeroPacketEntry) {
+      notify(`Cannot validate ZIP ${zeroPacketEntry.zip} with 0 packets.`);
+      return;
+    }
+    confirmValidateZips(entries, () => performValidateSelectedZips(entries));
   };
 
   const handleToggleIntakeScan = () => {
@@ -1137,41 +1930,54 @@ export default function WarehouseZipCountScreen() {
                   nonstop.
                 </Text>
 
-                <View style={styles.scanRow}>
-                  <ScanIcon size={56} />
-                  <View style={styles.scanTextGroup}>
-                    <View style={styles.currentZipRow}>
-                      <Text style={styles.currentZipLabel}>Current ZIP:</Text>
-                      <View style={styles.currentZipPill}>
-                        <Text style={styles.currentZipValue}>
-                          {currentEntry ? currentEntry.zip : "Not selected"}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.countingText}>
-                      {currentEntry
-                        ? `Counting packets for ZIP ${currentEntry.zip}`
-                        : "Select a ZIP to start counting."}
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.currentZipPanel,
+                    pressed && styles.currentZipPanelPressed,
+                  ]}
+                  onPress={handleOpenZipPicker}
+                  hitSlop={4}
+                >
+                  <View style={styles.currentZipIconRing}>
+                    <ScanIcon size={22} />
+                  </View>
+                  <View style={styles.currentZipPanelInfo}>
+                    <Text style={styles.currentZipPanelLabel}>
+                      Current ZIP
+                    </Text>
+                    <Text style={styles.currentZipPanelValue} numberOfLines={1}>
+                      {currentEntry ? `ZIP ${currentEntry.zip}` : "Not selected"}
                     </Text>
                   </View>
-                </View>
+                  <ChevronDownIcon size={16} />
+                </Pressable>
+                <Text style={styles.countingText}>
+                  {currentEntry
+                    ? `Counting packets for ZIP ${currentEntry.zip}`
+                    : "Select a Not counted ZIP to start counting."}
+                </Text>
 
-                <View style={styles.inputRow}>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Waiting for barcode scan..."
-                    placeholderTextColor={MUTED}
-                    selectionColor={ORANGE}
-                    value={scanInput}
-                    onChangeText={setScanInput}
-                  />
+                <View style={styles.scanActionsCol}>
                   <Pressable
-                    style={styles.scanActionBtn}
-                    onPress={handleToggleScan}
+                    style={styles.scanPrimaryBtn}
+                    onPress={handleStartScannerModal}
                   >
-                    {isScanning ? <PauseIcon /> : <PlayIcon />}
-                    <Text style={styles.primaryBtnText}>
+                    {isScanning ? (
+                      <PauseIcon size={13} />
+                    ) : (
+                      <PlayIcon size={13} />
+                    )}
+                    <Text style={styles.scanPrimaryBtnText}>
                       {isScanning ? "Pause Scan" : "Start Continuous Scan"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.scanSecondaryBtn}
+                    onPress={handleOpenManualRegister}
+                  >
+                    <KeyboardIcon size={13} color={ORANGE} />
+                    <Text style={styles.scanSecondaryBtnText}>
+                      Manual Register
                     </Text>
                   </Pressable>
                 </View>
@@ -1188,49 +1994,98 @@ export default function WarehouseZipCountScreen() {
                   </Text>
                 </View>
 
-                <View style={styles.statsRow}>
-                  <View style={styles.statBox}>
-                    <View style={styles.statHeaderRow}>
-                      <BoxIcon size={14} />
+                {lastScanResult === "success" && lastCountedZip && (
+                  <View style={styles.successBannerWrap}>
+                    <View style={styles.successBanner}>
+                      <CheckCircleIcon size={16} color={GREEN} />
+                      <View style={styles.successBannerTextGroup}>
+                        <Text style={styles.successBannerText}>
+                          Packet counted for {lastCountedZip}
+                        </Text>
+                        <Text style={styles.successBannerSubText}>
+                          Matching packet. Counted successfully.
+                        </Text>
+                      </View>
+                      <Text style={styles.successBannerTime}>
+                        {lastScanTime}
+                      </Text>
                     </View>
-                    <Text style={styles.statValueBig}>
-                      {formatNumber(currentEntry?.packets ?? 0)}
-                    </Text>
-                    <Text style={styles.statValueUnit}>packets</Text>
                   </View>
-                  <View style={styles.statBox}>
-                    <View style={styles.statHeaderRow}>
-                      <GaugeIcon size={14} />
-                    </View>
-                    <Text style={styles.statValueBig}>42</Text>
-                    <Text style={styles.statValueUnit}>packets/min</Text>
-                  </View>
-                  <View style={styles.statBox}>
-                    <View style={styles.statHeaderRow}>
-                      <ClockIcon size={14} />
-                    </View>
-                    <Text style={styles.statValue}>{LAST_SCANNED_CODE}</Text>
-                    <Text style={styles.statValueUnit}>Last scanned</Text>
-                  </View>
-                </View>
-
-                <View style={styles.successBanner}>
-                  <CheckCircleIcon size={16} color={GREEN} />
-                  <View style={styles.successBannerTextGroup}>
-                    <Text style={styles.successBannerText}>
-                      Packet counted for{" "}
-                      {currentEntry ? currentEntry.zip : "12689"}
-                    </Text>
-                    <Text style={styles.successBannerSubText}>
-                      Matching packet. Counted successfully.
-                    </Text>
-                  </View>
-                  <Text style={styles.successBannerTime}>{CURRENT_TIME}</Text>
-                </View>
+                )}
               </View>
 
+              <ZipPickerModal
+                visible={zipPickerVisible}
+                entries={pickableEntries}
+                selectedId={selectedZip}
+                onSelect={handlePickZipFromModal}
+                onClose={() => setZipPickerVisible(false)}
+              />
+
+              <ManualPacketCountModal
+                key={`manual-${manualRegisterKey}`}
+                visible={manualRegisterVisible}
+                zip={currentEntry?.zip ?? null}
+                currentCount={currentEntry?.packets ?? 0}
+                saving={manualRegisterSaving}
+                onSave={handleManualPacketCountSave}
+                onClose={() => {
+                  if (!manualRegisterSaving) setManualRegisterVisible(false);
+                }}
+              />
+
+              <ContinuousScanModal
+                visible={isScannerModalVisible}
+                zip={currentEntry?.zip ?? null}
+                isActive={isScannerActive}
+                inputValue={scannerInput}
+                onChangeInput={setScannerInput}
+                onScan={handleScannedValue}
+                onToggleActive={handleToggleScannerActive}
+                onClose={handleCloseScannerModal}
+                lastScannedValue={lastScannedValue}
+                lastScanResult={lastScanResult}
+                lastScanMessage={lastScanMessage}
+                lastScanTime={lastScanTime}
+                lastCountedZip={lastCountedZip}
+                scanCount={scanCountInSession}
+                exceptionCount={exceptionCountInSession}
+              />
+
+              <PacketCountedModal
+                visible={packetConfirmVisible}
+                zip={lastCountedZip}
+                time={lastScanTime}
+                onClose={() => setPacketConfirmVisible(false)}
+              />
+
+              <ZipValidatedModal
+                visible={zipValidatedModalVisible}
+                title={validatedSummary?.title ?? "ZIP Validated Successfully!"}
+                message={validatedSummary?.message ?? ""}
+                onClose={() => setZipValidatedModalVisible(false)}
+              />
+
               {/* ── Today's ZIP List ─────────────────────────────────────── */}
-              <Text style={styles.sectionLabel}>Today&apos;s ZIP List</Text>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>
+                  Today&apos;s ZIP List
+                </Text>
+                {validatableEntries.length > 0 && (
+                  <Pressable
+                    style={styles.selectAllRow}
+                    onPress={handleToggleSelectAll}
+                    hitSlop={8}
+                  >
+                    <View
+                      style={[styles.checkbox, allChecked && styles.checkboxChecked]}
+                    >
+                      {allChecked && <CheckMarkIcon size={11} color={WHITE} />}
+                    </View>
+                    <Text style={styles.selectAllText}>Select all</Text>
+                  </Pressable>
+                )}
+              </View>
               <View style={styles.card}>
                 {zipLoading || zipError || zipEntries.length === 0 ? (
                   <ZipCodesState
@@ -1244,8 +2099,8 @@ export default function WarehouseZipCountScreen() {
                       key={entry.id}
                       entry={entry}
                       isLast={i === zipEntries.length - 1}
-                      isSelected={selectedZip === entry.id}
-                      onSelect={() => handleSelectZip(entry)}
+                      checked={checkedZipIds.has(entry.id)}
+                      onToggleCheck={() => handleToggleCheckZip(entry)}
                     />
                   ))
                 )}
@@ -1257,13 +2112,25 @@ export default function WarehouseZipCountScreen() {
                   <Text style={styles.cancelBtnText}>Cancel</Text>
                 </Pressable>
                 <Pressable
-                  style={styles.validateBtn}
-                  onPress={handleValidateZip}
+                  style={[
+                    styles.validateBtn,
+                    validatingZips && styles.validateBtnDisabled,
+                  ]}
+                  onPress={handleValidateSelectedZips}
+                  disabled={validatingZips}
                 >
-                  <CheckCircleIcon size={13} color={WHITE} />
-                  <Text style={styles.validateBtnText} numberOfLines={1}>
-                    Validate This ZIP
-                  </Text>
+                  {validatingZips ? (
+                    <ActivityIndicator size="small" color={WHITE} />
+                  ) : (
+                    <>
+                      <CheckCircleIcon size={13} color={WHITE} />
+                      <Text style={styles.validateBtnText} numberOfLines={1}>
+                        {checkedZipIds.size > 0
+                          ? `Validate Selected (${checkedZipIds.size})`
+                          : "Validate Selected ZIPs"}
+                      </Text>
+                    </>
+                  )}
                 </Pressable>
               </View>
             </>
@@ -1441,6 +2308,22 @@ const styles = StyleSheet.create({
     color: WHITE,
     marginBottom: 10,
   },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  selectAllRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  selectAllText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    color: ORANGE,
+  },
 
   // ── Card base
   card: {
@@ -1489,7 +2372,6 @@ const styles = StyleSheet.create({
   },
   countCard: {
     width: "47%",
-    flexGrow: 1,
     minWidth: 0,
     backgroundColor: CARD,
     borderRadius: 14,
@@ -1599,19 +2481,6 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 14,
   },
-  textInput: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: INNER,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontFamily: "Poppins_500Medium",
-    fontSize: 13,
-    color: WHITE,
-  },
   inputWithIcon: {
     flex: 1,
     minWidth: 0,
@@ -1650,15 +2519,6 @@ const styles = StyleSheet.create({
   },
   primaryBtnDisabled: {
     opacity: 0.6,
-  },
-  scanActionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: ORANGE,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    justifyContent: "center",
   },
   scanActionBtnFlex: {
     flex: 1,
@@ -1796,41 +2656,56 @@ const styles = StyleSheet.create({
   scanTextGroup: {
     flex: 1,
   },
-  currentZipRow: {
+  currentZipPanel: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-  },
-  currentZipLabel: {
-    fontFamily: "Poppins_500Medium",
-    fontSize: 12.5,
-    color: WHITE,
-  },
-  currentZipPill: {
+    gap: 12,
+    backgroundColor: INNER,
     borderWidth: 1.5,
-    borderColor: ORANGE,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+    borderColor: "rgba(255,101,0,0.35)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
   },
-  currentZipValue: {
+  currentZipPanelPressed: {
+    opacity: 0.7,
+  },
+  currentZipIconRing: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,101,0,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  currentZipPanelInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  currentZipPanelLabel: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 10.5,
+    color: DIM,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  currentZipPanelValue: {
     fontFamily: "Poppins_700Bold",
-    fontSize: 13,
+    fontSize: 17,
     color: ORANGE,
+    marginTop: 2,
   },
   countingText: {
     fontFamily: "Poppins_500Medium",
     fontSize: 12,
     color: ORANGE,
-    marginTop: 6,
+    marginTop: 8,
+    marginBottom: 16,
   },
 
   // ── Scan meta row (hardware active / manual entry)
   scanMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
+    gap: 6,
     marginBottom: 14,
   },
   hwActiveRow: {
@@ -1902,7 +2777,54 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  // ── ZIP Count Scan action buttons (side by side, equal width)
+  scanActionsCol: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+  },
+  scanPrimaryBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: ORANGE,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  scanPrimaryBtnText: {
+    flexShrink: 1,
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 13,
+    color: WHITE,
+    textAlign: "center",
+  },
+  scanSecondaryBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: ORANGE,
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+  },
+  scanSecondaryBtnText: {
+    flexShrink: 1,
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    color: ORANGE,
+    textAlign: "center",
+  },
+
   // ── Success banner
+  successBannerWrap: {
+    marginTop: 4,
+  },
   successBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -1933,52 +2855,6 @@ const styles = StyleSheet.create({
     fontFamily: "Poppins_600SemiBold",
     fontSize: 12,
     color: DIM,
-  },
-
-  // ── Stats
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 14,
-  },
-  statBox: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: INNER,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    gap: 4,
-  },
-  statHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 2,
-  },
-  statLabel: {
-    flexShrink: 1,
-    fontFamily: "Poppins_400Regular",
-    fontSize: 10.5,
-    color: DIM,
-  },
-  statValue: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 11.5,
-    color: WHITE,
-  },
-  statValueBig: {
-    fontFamily: "Poppins_700Bold",
-    fontSize: 18,
-    color: WHITE,
-  },
-  statValueUnit: {
-    fontFamily: "Poppins_400Regular",
-    fontSize: 10.5,
-    color: DIM,
-    marginTop: -2,
   },
 
   intakeStatsGrid: {
@@ -2054,23 +2930,20 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     flexWrap: "wrap",
   },
-  selectBtn: {
+  checkboxHit: {
+    padding: 2,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
     borderWidth: 1.5,
     borderColor: ORANGE,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  selectBtnActive: {
+  checkboxChecked: {
     backgroundColor: ORANGE,
-  },
-  selectBtnText: {
-    fontFamily: "Poppins_600SemiBold",
-    fontSize: 11.5,
-    color: ORANGE,
-  },
-  selectBtnTextActive: {
-    color: WHITE,
   },
   viewBtn: {
     flexDirection: "row",
@@ -2126,6 +2999,9 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     color: WHITE,
   },
+  validateBtnDisabled: {
+    opacity: 0.6,
+  },
 
   // ── Intake Scan
   helperText: {
@@ -2177,5 +3053,466 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  // ── ZIP picker modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+  },
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 28,
+  },
+  confirmCard: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: CARD,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.4)",
+    paddingVertical: 26,
+    paddingHorizontal: 22,
+    alignItems: "center",
+  },
+  confirmIconRing: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(34,197,94,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  confirmTitle: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 17,
+    color: WHITE,
+    marginBottom: 6,
+  },
+  confirmMessage: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 14,
+    color: GREEN,
+    textAlign: "center",
+  },
+  validatedMessage: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: DIM,
+    textAlign: "center",
+    lineHeight: 19,
+    marginTop: 6,
+    marginBottom: 22,
+  },
+  confirmTime: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12.5,
+    color: DIM,
+    marginTop: 6,
+    marginBottom: 20,
+  },
+  confirmCloseBtn: {
+    alignSelf: "stretch",
+    backgroundColor: GREEN,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  confirmCloseBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 14,
+    color: WHITE,
+  },
+  pickerSheet: {
+    backgroundColor: CARD,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: 20,
+    paddingBottom: 30,
+    borderTopWidth: 1,
+    borderColor: BORDER,
+    maxHeight: "75%",
+  },
+  sheetHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  sheetTitle: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 17,
+    color: WHITE,
+  },
+  pickerSubtitle: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12,
+    color: DIM,
+    marginBottom: 16,
+  },
+  pickerList: {
+    gap: 10,
+  },
+  pickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: INNER,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 10,
+  },
+  pickerRowSelected: {
+    borderColor: ORANGE,
+    backgroundColor: "rgba(255,101,0,0.1)",
+  },
+  pickerRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  pickerZipText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 14,
+    color: WHITE,
+  },
+  pickerPacketsText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 11.5,
+    color: DIM,
+  },
+  pickerEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 28,
+  },
+  pickerEmptyText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 12.5,
+    color: DIM,
+    textAlign: "center",
+  },
+
+  // ── Manual register modal
+  manualSheet: {
+    backgroundColor: CARD,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 22,
+    paddingBottom: 32,
+    borderTopWidth: 1,
+    borderColor: BORDER,
+  },
+  manualZipBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: INNER,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,101,0,0.35)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 18,
+  },
+  manualZipIconRing: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,101,0,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  manualZipBadgeLabel: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 10.5,
+    color: DIM,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  manualZipBadgeText: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 20,
+    color: ORANGE,
+    marginTop: 2,
+  },
+  fieldLabel: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    color: WHITE,
+    marginBottom: 8,
+  },
+  manualInput: {
+    backgroundColor: INNER,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    fontFamily: "Poppins_700Bold",
+    fontSize: 22,
+    color: WHITE,
+    textAlign: "center",
+  },
+  inputError: {
+    borderColor: "#EF4444",
+  },
+  errorText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 11.5,
+    color: "#EF4444",
+    marginTop: 6,
+  },
+  manualConfirmBtnText: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 14,
+    color: WHITE,
+  },
+  manualButtonsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 18,
+  },
+  manualSaveBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: ORANGE,
+    borderRadius: 14,
+    paddingVertical: 15,
+    shadowColor: ORANGE,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  manualSaveBtnDisabled: {
+    opacity: 0.6,
+  },
+
+  // ── Continuous ZIP scan modal
+  scannerRoot: { flex: 1, backgroundColor: BG },
+  scannerContent: { padding: 20, paddingBottom: 32 },
+  scannerHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  scannerHeaderTextGroup: { flex: 1, paddingRight: 12 },
+  scannerTitle: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 20,
+    color: WHITE,
+  },
+  scannerSubtitle: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 12.5,
+    color: DIM,
+    marginTop: 4,
+  },
+  scannerCloseIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: INNER,
+    borderWidth: 1,
+    borderColor: BORDER,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scannerZipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    backgroundColor: CARD,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  scannerZipLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  scannerZipText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 13,
+    color: WHITE,
+  },
+  scannerActiveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  scannerActiveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  scannerActiveBadgeText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 11,
+  },
+  scannerStatusText: {
+    fontFamily: "Poppins_500Medium",
+    fontSize: 13,
+    color: ORANGE,
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  scannerFrame: {
+    alignSelf: "center",
+    width: 120,
+    height: 120,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderStyle: "dashed",
+    borderColor: ORANGE,
+    backgroundColor: "rgba(255,101,0,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
+  scannerInputField: {
+    backgroundColor: INNER,
+    borderWidth: 1.5,
+    borderColor: ORANGE,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 15,
+    color: WHITE,
+    textAlign: "center",
+    marginBottom: 10,
+  },
+  scannerHelperText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 11.5,
+    color: MUTED,
+    textAlign: "center",
+    lineHeight: 16,
+    marginBottom: 16,
+  },
+  scannerResultBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  scannerResultTime: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    marginLeft: 10,
+  },
+  scannerStatsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    rowGap: 10,
+    columnGap: 10,
+    marginBottom: 20,
+  },
+  scannerStatBox: {
+    width: "47%",
+    flexGrow: 1,
+    backgroundColor: INNER,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  scannerStatBoxFull: {
+    width: "100%",
+  },
+  scannerStatValue: {
+    fontFamily: "Poppins_700Bold",
+    fontSize: 16,
+    color: WHITE,
+  },
+  scannerStatLabel: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 10.5,
+    color: DIM,
+  },
+  scannerButtonsRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 8,
+    marginBottom: 10,
+  },
+  scannerPauseBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: ORANGE,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  scannerPauseBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    color: WHITE,
+  },
+  scannerManualBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: ORANGE,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  scannerManualBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    color: ORANGE,
+  },
+  scannerCloseBtn: {
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  scannerCloseBtnText: {
+    fontFamily: "Poppins_600SemiBold",
+    fontSize: 12.5,
+    color: DIM,
+  },
+  scannerBottomText: {
+    fontFamily: "Poppins_400Regular",
+    fontSize: 11,
+    color: MUTED,
+    textAlign: "center",
   },
 });
