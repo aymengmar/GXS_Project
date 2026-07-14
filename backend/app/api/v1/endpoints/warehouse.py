@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Header
 
+from app.schemas.assignment import AssignmentPlanGenerateResponse
 from app.schemas.warehouse import (
     AvailableDriversResponse,
     DriverAvailabilityUpdateRequest,
@@ -14,6 +15,7 @@ from app.schemas.warehouse import (
     WarehouseZipPacketCountUpdateResponse,
     WarehouseZipValidateResponse,
 )
+from app.services.assignment_service import generate_assignment_plan
 from app.services.warehouse_service import (
     add_zip_code,
     delete_zip_code,
@@ -103,3 +105,13 @@ def zip_count_delete(
     authorization: str = Header(...),
 ) -> WarehouseZipCodeDeleteResponse:
     return delete_zip_code(authorization, zip_id)
+
+
+@router.post(
+    "/assignment-plan/generate",
+    response_model=AssignmentPlanGenerateResponse,
+)
+def assignment_plan_generate(
+    authorization: str = Header(...),
+) -> AssignmentPlanGenerateResponse:
+    return generate_assignment_plan(authorization)

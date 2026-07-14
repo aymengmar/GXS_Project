@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     EMAIL_FROM: str = "noreply@gxsdelivery.app"
     APP_LOGIN_URL: str = "https://gxsdelivery.app/login"
 
+    # OpenAI is used server-side only (ZIP assignment drafting). The key should
+    # come from Supabase Vault once a vault-read RPC is provisioned; until then
+    # this backend-only env var is the interim source. Never expose to mobile.
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

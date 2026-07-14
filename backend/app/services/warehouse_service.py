@@ -160,6 +160,27 @@ def _get_today_validated_total_packets(warehouse_auth_user_id: str) -> int:
     return total
 
 
+def get_ready_drivers(warehouse_auth_user_id: str) -> list[dict]:
+    """Approved drivers marked `ready` for today, for AI/deterministic ZIP assignment."""
+    result = (
+        supabase_admin.table("driver_profiles")
+        .select("auth_user_id, full_name, external_driver_id, postal_code, car_type")
+        .eq("status", "approved")
+        .order("full_name")
+        .execute()
+    )
+    profiles = result.data or []
+
+    auth_user_ids = [p["auth_user_id"] for p in profiles]
+    availability_by_user = _get_today_availability_by_driver(auth_user_ids)
+
+    return [
+        profile
+        for profile in profiles
+        if availability_by_user.get(profile["auth_user_id"], _DEFAULT_AVAILABILITY_STATUS) == "ready"
+    ]
+
+
 def get_available_drivers(authorization: str) -> AvailableDriversResponse:
     warehouse_auth_user_id = _require_warehouse(authorization)
 
@@ -331,6 +352,31 @@ def _ensure_carried_over_zip_rows(warehouse_auth_user_id: str, today: str) -> No
                 "updated_at": now,
             }
         ).execute()
+
+
+def get_today_validated_zips_with_remaining(warehouse_auth_user_id: str) -> list[dict]:
+    """Today's validated ZIPs that still have packets left to assign."""
+    today = date.today().isoformat()
+
+    result = (
+        supabase_admin.table("warehouse_daily_zip_codes")
+        .select("zip_code, manual_packet_count, carried_over_packets, assigned_packets")
+        .eq("warehouse_auth_user_id", warehouse_auth_user_id)
+        .eq("zip_date", today)
+        .eq("status", "validated")
+        .execute()
+    )
+
+    zips = []
+    for row in result.data or []:
+        packet_count = row.get("manual_packet_count")
+        if packet_count is None:
+            packet_count = row.get("carried_over_packets") or 0
+        remaining_packets = max(packet_count - (row.get("assigned_packets") or 0), 0)
+        if remaining_packets > 0:
+            zips.append({"zip_code": row["zip_code"], "remaining_packets": remaining_packets})
+
+    return zips
 
 
 def get_today_zip_codes(authorization: str) -> WarehouseZipCodeListResponse:
