@@ -1070,6 +1070,7 @@ export type WarehouseAvailableDriversResponse = {
   drivers: WarehouseAvailableDriver[];
   summary: {
     available_drivers: number;
+    total_packets?: number | null;
   };
 };
 
@@ -1146,6 +1147,8 @@ export type WarehouseZipCodeItem = {
   status_label: string;
   packet_count: number;
   carried_over_packets: number;
+  assigned_packets: number;
+  remaining_packets: number;
   created_at: string;
   updated_at: string;
 };

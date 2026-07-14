@@ -21,6 +21,7 @@ class AvailableDriverItem(BaseModel):
 
 class AvailableDriversSummary(BaseModel):
     available_drivers: int
+    total_packets: int
 
 
 class AvailableDriversResponse(BaseModel):
@@ -48,6 +49,8 @@ class WarehouseZipCodeItem(BaseModel):
     packet_count: int
     manual_packet_count: Optional[int]
     carried_over_packets: int
+    assigned_packets: int
+    remaining_packets: int
     created_at: str
     updated_at: str
 
@@ -69,6 +72,14 @@ class WarehouseZipPacketCountUpdateResponse(WarehouseZipCodeItem):
 
 
 class WarehouseZipValidateResponse(WarehouseZipCodeItem):
+    pass
+
+
+class WarehouseZipAssignedPacketsUpdateRequest(BaseModel):
+    assigned_packets: int
+
+
+class WarehouseZipAssignedPacketsUpdateResponse(WarehouseZipCodeItem):
     pass
 
 

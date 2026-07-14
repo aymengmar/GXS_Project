@@ -1,8 +1,11 @@
 import {
   fetchWarehouseAvailableDrivers,
+  fetchWarehouseZipCodes,
   updateDriverAvailability,
   type DriverAvailabilityStatus,
   type WarehouseAvailableDriver,
+  type WarehouseZipCodeItem,
+  type WarehouseZipCodeStatus,
 } from "@/api/backendClient";
 import type { WarehouseTab } from "@/components/warehouse/WarehouseBottomTabs";
 import { images } from "@/constants/images";
@@ -51,9 +54,17 @@ const WAREHOUSE_MAPS_URL =
   "https://www.google.com/maps/search/?api=1&query=Billstraße%2045%2C%2020539%20Hamburg%2C%20Germany";
 
 const OVERVIEW = {
-  totalPackets: "1,240",
   returnsYesterday: "1,200",
 };
+
+function formatPacketCount(value: number | null | undefined): string {
+  const safeValue = value ?? 0;
+  return safeValue.toLocaleString("en-US");
+}
+
+function getRemainingPackets(item: WarehouseZipCodeItem): number {
+  return item.remaining_packets ?? item.packet_count;
+}
 
 const DRIVER_AVATAR_COLORS: { color: string; bg: string }[] = [
   { color: ORANGE, bg: "rgba(255,101,0,0.15)" },
@@ -73,13 +84,16 @@ function getInitials(fullName?: string) {
   );
 }
 
-const ZIP_CODES: { zip: string; packets: number }[] = [
-  { zip: "22111", packets: 240 },
-  { zip: "22113", packets: 180 },
-  { zip: "22115", packets: 150 },
-  { zip: "22041", packets: 320 },
-  { zip: "22043", packets: 310 },
-];
+function getZipStatusColor(status: WarehouseZipCodeStatus | string): string {
+  switch (status) {
+    case "validated":
+      return GREEN;
+    case "in_progress":
+      return ORANGE;
+    default:
+      return MUTED;
+  }
+}
 
 const RETURNS: {
   name: string;
@@ -388,14 +402,22 @@ function DriverRow({
   );
 }
 
-function ZipCard({ zip, packets }: { zip: string; packets: number }) {
+function ZipCard({
+  zip,
+  packets,
+  status,
+}: {
+  zip: string;
+  packets: number;
+  status: WarehouseZipCodeStatus;
+}) {
   return (
     <View style={styles.zipCard}>
       <View style={styles.zipDotRow}>
-        <View style={styles.zipDot} />
+        <View style={[styles.zipDot, { backgroundColor: getZipStatusColor(status) }]} />
         <Text style={styles.zipNumber}>{zip}</Text>
       </View>
-      <Text style={styles.zipPackets}>{packets} packets</Text>
+      <Text style={styles.zipPackets}>{formatPacketCount(packets)} packets</Text>
     </View>
   );
 }
@@ -629,6 +651,7 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
 
   const [drivers, setDrivers] = useState<WarehouseAvailableDriver[] | null>(null);
   const [availableCount, setAvailableCount] = useState<number | null>(null);
+  const [totalPackets, setTotalPackets] = useState<number | null>(null);
   const [driversLoading, setDriversLoading] = useState(true);
   const [driversError, setDriversError] = useState<string | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<WarehouseAvailableDriver | null>(null);
@@ -638,6 +661,9 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
   const [availabilitySaving, setAvailabilitySaving] = useState<DriverAvailabilityStatus | null>(
     null
   );
+  const [zipCodes, setZipCodes] = useState<WarehouseZipCodeItem[] | null>(null);
+  const [zipCodesLoading, setZipCodesLoading] = useState(true);
+  const [zipCodesError, setZipCodesError] = useState<string | null>(null);
 
   const fetchAvailableDrivers = (accessToken: string) => {
     fetchWarehouseAvailableDrivers(accessToken)
@@ -647,6 +673,7 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
           (driver) => driver.availability_status !== "not_ready"
         ).length;
         setAvailableCount(data.summary?.available_drivers ?? fallbackCount);
+        setTotalPackets(data.summary?.total_packets ?? 0);
         setDriversLoading(false);
       })
       .catch(() => {
@@ -655,10 +682,23 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
       });
   };
 
+  const fetchZipCodesToday = (accessToken: string) => {
+    fetchWarehouseZipCodes(accessToken)
+      .then((data) => {
+        setZipCodes(data.zip_codes);
+        setZipCodesLoading(false);
+      })
+      .catch(() => {
+        setZipCodesError("Unable to load ZIP codes.");
+        setZipCodesLoading(false);
+      });
+  };
+
   useEffect(() => {
     const session = sessionStore.get();
     if (session?.kind !== "warehouse") return;
     fetchAvailableDrivers(session.access_token);
+    fetchZipCodesToday(session.access_token);
   }, []);
 
   const handleRetryDrivers = () => {
@@ -667,6 +707,14 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
     setDriversLoading(true);
     setDriversError(null);
     fetchAvailableDrivers(session.access_token);
+  };
+
+  const handleRetryZipCodes = () => {
+    const session = sessionStore.get();
+    if (session?.kind !== "warehouse") return;
+    setZipCodesLoading(true);
+    setZipCodesError(null);
+    fetchZipCodesToday(session.access_token);
   };
 
   const applyAvailabilityUpdate = (
@@ -828,8 +876,8 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
               iconBg="rgba(34,197,94,0.15)"
               icon={<BoxIcon size={20} color={GREEN} />}
               label="Total Packets"
-              value={OVERVIEW.totalPackets}
-              subtitle="Counted today"
+              value={driversLoading ? "—" : formatPacketCount(totalPackets)}
+              subtitle="Validated today"
             />
             <OverviewCard
               iconBg="rgba(255,101,0,0.15)"
@@ -880,9 +928,9 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
             )}
           </View>
 
-          {/* ── Driver's ZIP Code ────────────────────────────────────────── */}
+          {/* ── ZIP Codes Available Today ────────────────────────────────── */}
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>Driver’s ZIP Code</Text>
+            <Text style={styles.sectionLabel}>ZIP Codes Available Today</Text>
             <Pressable
               style={styles.outlinePill}
               onPress={() => onNavigate?.("zipCount")}
@@ -892,11 +940,36 @@ export default function WarehouseDashboardScreen({ onNavigate }: Props) {
               <ChevronRight size={13} color={ORANGE} />
             </Pressable>
           </View>
-          <View style={styles.zipGrid}>
-            {ZIP_CODES.map((z) => (
-              <ZipCard key={z.zip} zip={z.zip} packets={z.packets} />
-            ))}
-          </View>
+          {zipCodesLoading ? (
+            <View style={[styles.card, styles.driversStateBox]}>
+              <ActivityIndicator size="small" color={ORANGE} />
+              <Text style={styles.driversStateText}>Loading ZIP codes...</Text>
+            </View>
+          ) : zipCodesError ? (
+            <View style={[styles.card, styles.driversStateBox]}>
+              <Text style={styles.driversStateText}>{zipCodesError}</Text>
+              <Pressable style={styles.retryBtn} onPress={handleRetryZipCodes}>
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : !zipCodes || zipCodes.filter((z) => getRemainingPackets(z) > 0).length === 0 ? (
+            <View style={[styles.card, styles.driversStateBox]}>
+              <Text style={styles.driversStateText}>No ZIP codes available today.</Text>
+            </View>
+          ) : (
+            <View style={styles.zipGrid}>
+              {zipCodes
+                .filter((z) => getRemainingPackets(z) > 0)
+                .map((z) => (
+                  <ZipCard
+                    key={z.id}
+                    zip={z.zip_code}
+                    packets={getRemainingPackets(z)}
+                    status={z.status}
+                  />
+                ))}
+            </View>
+          )}
 
           {/* ── Returned Packets ─────────────────────────────────────────── */}
           <Text style={styles.sectionLabel}>Returned Packets</Text>

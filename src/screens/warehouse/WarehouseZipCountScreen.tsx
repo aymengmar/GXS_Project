@@ -160,6 +160,7 @@ type ZipEntry = {
   packets: number;
   status: ZipStatus;
   carriedOverPackets: number;
+  remainingPackets: number;
 };
 
 // Business rule: a ZIP with packets already counted, or with carried-over
@@ -714,7 +715,7 @@ function ZipCountCard({ entry }: { entry: ZipEntry }) {
         </Text>
       </View>
       <Text style={styles.countCardSub} numberOfLines={1}>
-        {formatNumber(entry.packets)} packets
+        {formatNumber(entry.remainingPackets)} packets
       </Text>
       <StatusBadge status={entry.status} />
       {/* Always reserve this row's space so every card is the same height,
@@ -748,7 +749,7 @@ function ZipChip({
         )}
       </View>
       <Text style={styles.zipChipPackets}>
-        {formatNumber(entry.packets)} packets
+        {formatNumber(entry.remainingPackets)} packets
       </Text>
       <View style={styles.zipChipStatusRow}>
         <View style={[styles.zipChipDot, { backgroundColor: meta.dotColor }]} />
@@ -790,7 +791,7 @@ function ZipListRow({
           <Text style={styles.zipListNumber}>ZIP {entry.zip}</Text>
         </View>
         <Text style={styles.zipListPackets} numberOfLines={1}>
-          {formatNumber(entry.packets)} packets
+          {formatNumber(entry.remainingPackets)} packets
         </Text>
       </View>
       <View style={styles.zipListBottomRow}>
@@ -1427,6 +1428,7 @@ export default function WarehouseZipCountScreen() {
         packets: item.packet_count,
         status: getDisplayStatus(item),
         carriedOverPackets: item.carried_over_packets,
+        remainingPackets: item.remaining_packets ?? item.packet_count,
       })),
     [zipItems],
   );
