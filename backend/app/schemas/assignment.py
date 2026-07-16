@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 
 class AssignmentItem(BaseModel):
+    item_id: Optional[str] = None
     driver_auth_user_id: str
     driver_name: str
     driver_home_zip: Optional[str]
@@ -41,3 +42,21 @@ class AssignmentPlanGenerateResponse(BaseModel):
     drivers_without_packets: list[DriverWithoutPacketsItem]
     plan_review: list[str]
     summary: AssignmentPlanSummary
+
+
+class AssignmentPlanSendResponse(AssignmentPlanGenerateResponse):
+    sent_at: str
+
+
+class AssignmentItemPacketCountUpdateRequest(BaseModel):
+    packets: int
+
+
+class AssignmentItemDriverUpdateRequest(BaseModel):
+    driver_auth_user_id: str
+
+
+class AssignmentItemManualAddRequest(BaseModel):
+    driver_auth_user_id: str
+    zip_code: str
+    packets: int

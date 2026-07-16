@@ -7,6 +7,7 @@ const assignmentZipMap = require("@/assets/images/driver/assignment-zip-map.png"
 const companyVehicle = require("@/assets/images/driver/company-vehicle.png");
 const ownVehicle = require("@/assets/images/driver/car.png");
 const warehouseMainIcon = require("@/assets/images/warehouse/warehouse-main-icon.png");
+const warehousePlanAssignHero = require("@/assets/images/warehouse/image12.png");
 
 export const images = {
   logoGlow,
@@ -18,4 +19,5 @@ export const images = {
   companyVehicle,
   ownVehicle,
   warehouseMainIcon,
+  warehousePlanAssignHero,
 };

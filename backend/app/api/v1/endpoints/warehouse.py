@@ -1,6 +1,12 @@
 from fastapi import APIRouter, Header
 
-from app.schemas.assignment import AssignmentPlanGenerateResponse
+from app.schemas.assignment import (
+    AssignmentItemDriverUpdateRequest,
+    AssignmentItemManualAddRequest,
+    AssignmentItemPacketCountUpdateRequest,
+    AssignmentPlanGenerateResponse,
+    AssignmentPlanSendResponse,
+)
 from app.schemas.warehouse import (
     AvailableDriversResponse,
     DriverAvailabilityUpdateRequest,
@@ -15,7 +21,14 @@ from app.schemas.warehouse import (
     WarehouseZipPacketCountUpdateResponse,
     WarehouseZipValidateResponse,
 )
-from app.services.assignment_service import generate_assignment_plan
+from app.services.assignment_service import (
+    add_manual_plan_item,
+    delete_plan_item,
+    generate_assignment_plan,
+    send_assignment_plan,
+    update_plan_item_driver,
+    update_plan_item_packet_count,
+)
 from app.services.warehouse_service import (
     add_zip_code,
     delete_zip_code,
@@ -115,3 +128,59 @@ def assignment_plan_generate(
     authorization: str = Header(...),
 ) -> AssignmentPlanGenerateResponse:
     return generate_assignment_plan(authorization)
+
+
+@router.post(
+    "/assignment-plan/items",
+    response_model=AssignmentPlanGenerateResponse,
+)
+def assignment_plan_item_add_manual(
+    body: AssignmentItemManualAddRequest,
+    authorization: str = Header(...),
+) -> AssignmentPlanGenerateResponse:
+    return add_manual_plan_item(authorization, body.driver_auth_user_id, body.zip_code, body.packets)
+
+
+@router.patch(
+    "/assignment-plan/items/{item_id}/packet-count",
+    response_model=AssignmentPlanGenerateResponse,
+)
+def assignment_plan_item_update_packet_count(
+    item_id: str,
+    body: AssignmentItemPacketCountUpdateRequest,
+    authorization: str = Header(...),
+) -> AssignmentPlanGenerateResponse:
+    return update_plan_item_packet_count(authorization, item_id, body.packets)
+
+
+@router.patch(
+    "/assignment-plan/items/{item_id}/driver",
+    response_model=AssignmentPlanGenerateResponse,
+)
+def assignment_plan_item_update_driver(
+    item_id: str,
+    body: AssignmentItemDriverUpdateRequest,
+    authorization: str = Header(...),
+) -> AssignmentPlanGenerateResponse:
+    return update_plan_item_driver(authorization, item_id, body.driver_auth_user_id)
+
+
+@router.delete(
+    "/assignment-plan/items/{item_id}",
+    response_model=AssignmentPlanGenerateResponse,
+)
+def assignment_plan_item_delete(
+    item_id: str,
+    authorization: str = Header(...),
+) -> AssignmentPlanGenerateResponse:
+    return delete_plan_item(authorization, item_id)
+
+
+@router.post(
+    "/assignment-plan/send",
+    response_model=AssignmentPlanSendResponse,
+)
+def assignment_plan_send(
+    authorization: str = Header(...),
+) -> AssignmentPlanSendResponse:
+    return send_assignment_plan(authorization)

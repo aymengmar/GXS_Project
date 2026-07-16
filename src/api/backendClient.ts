@@ -1251,6 +1251,187 @@ export async function updateWarehouseZipPacketCount(
   return data as WarehouseZipCodeItem;
 }
 
+// ── Warehouse Assignment Plan ─────────────────────────────────────────────────
+
+export type WarehouseAssignmentPlanItem = {
+  item_id: string | null;
+  driver_auth_user_id: string;
+  driver_name: string;
+  driver_home_zip: string | null;
+  zip_code: string;
+  packets: number;
+  match_type: string;
+  reason: string;
+};
+
+export type WarehouseUnassignedZipItem = {
+  zip_code: string;
+  packets: number;
+  reason: string;
+};
+
+export type WarehouseDriverWithoutPacketsItem = {
+  driver_auth_user_id: string;
+  driver_name: string;
+  reason: string;
+};
+
+export type WarehouseAssignmentPlanSummary = {
+  total_packets: number;
+  assigned_packets: number;
+  unassigned_packets: number;
+  drivers_used: number;
+  ready_drivers: number;
+};
+
+export type WarehouseAssignmentPlanResponse = {
+  status: string;
+  plan_id: string;
+  assignments: WarehouseAssignmentPlanItem[];
+  unassigned_zips: WarehouseUnassignedZipItem[];
+  drivers_without_packets: WarehouseDriverWithoutPacketsItem[];
+  plan_review: string[];
+  summary: WarehouseAssignmentPlanSummary;
+};
+
+export async function generateWarehouseAssignmentPlan(
+  accessToken: string,
+): Promise<WarehouseAssignmentPlanResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/assignment-plan/generate`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to generate assignment plan. Please try again."),
+    );
+  }
+  return data as WarehouseAssignmentPlanResponse;
+}
+
+export async function updateAssignmentPlanItemPacketCount(
+  accessToken: string,
+  itemId: string,
+  packets: number,
+): Promise<WarehouseAssignmentPlanResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/assignment-plan/items/${encodeURIComponent(itemId)}/packet-count`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ packets }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to update packet count."),
+    );
+  }
+  return data as WarehouseAssignmentPlanResponse;
+}
+
+export async function changeAssignmentPlanItemDriver(
+  accessToken: string,
+  itemId: string,
+  driverAuthUserId: string,
+): Promise<WarehouseAssignmentPlanResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/assignment-plan/items/${encodeURIComponent(itemId)}/driver`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ driver_auth_user_id: driverAuthUserId }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Unable to change driver."));
+  }
+  return data as WarehouseAssignmentPlanResponse;
+}
+
+export async function deleteAssignmentPlanItem(
+  accessToken: string,
+  itemId: string,
+): Promise<WarehouseAssignmentPlanResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/assignment-plan/items/${encodeURIComponent(itemId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, "Unable to remove assignment."));
+  }
+  return data as WarehouseAssignmentPlanResponse;
+}
+
+export async function addManualAssignmentItem(
+  accessToken: string,
+  driverAuthUserId: string,
+  zipCode: string,
+  packets: number,
+): Promise<WarehouseAssignmentPlanResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/assignment-plan/items`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        driver_auth_user_id: driverAuthUserId,
+        zip_code: zipCode,
+        packets,
+      }),
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to add manual assignment."),
+    );
+  }
+  return data as WarehouseAssignmentPlanResponse;
+}
+
+export type WarehouseAssignmentPlanSendResponse = WarehouseAssignmentPlanResponse & {
+  sent_at: string;
+};
+
+export async function sendWarehouseAssignmentPlan(
+  accessToken: string,
+): Promise<WarehouseAssignmentPlanSendResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/assignment-plan/send`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to send assignment plan. Please try again."),
+    );
+  }
+  return data as WarehouseAssignmentPlanSendResponse;
+}
+
 export async function validateWarehouseZipCode(
   accessToken: string,
   zipId: string,
