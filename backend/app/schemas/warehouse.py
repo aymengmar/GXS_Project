@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -98,4 +98,60 @@ class WarehouseZipCodeListResponse(BaseModel):
 
 
 class WarehouseZipCodeDeleteResponse(BaseModel):
+    message: str
+
+
+class WarehouseReturnsYesterdaySummaryResponse(BaseModel):
+    assignment_date: str
+    status: Literal["pending_validation", "no_assignment"]
+    assigned_yesterday: int
+    drivers_involved: int
+    returned_packets: int
+    confirmed_signatures: int
+    pending_signatures: int
+    is_closed: bool
+    closure_id: Optional[str]
+    closed_at: Optional[str]
+
+
+class WarehouseReturnDriverItem(BaseModel):
+    plan_id: str
+    plan_item_id: str
+    driver_auth_user_id: str
+    driver_name: str
+    driver_external_id: Optional[str]
+    zip_code: str
+    assigned_packets: int
+    returned_packets: int
+    signature_status: Literal["not_started", "confirmed"]
+    signed_at: Optional[str]
+    has_signature: bool
+
+
+class WarehouseReturnsYesterdayDriversResponse(BaseModel):
+    assignment_date: str
+    total_items: int
+    rows: list[WarehouseReturnDriverItem]
+
+
+class WarehouseReturnRecordSaveRequest(BaseModel):
+    plan_item_id: str
+    returned_packets: int
+    signature_data: Any = None
+
+
+class WarehouseReturnRecordResponse(WarehouseReturnDriverItem):
+    pass
+
+
+class WarehouseReturnDayCloseResponse(BaseModel):
+    status: Literal["closed"]
+    closure_id: str
+    assignment_date: str
+    return_date: str
+    total_assigned_packets: int
+    total_returned_packets: int
+    drivers_count: int
+    confirmed_signatures: int
+    pending_signatures: int
     message: str

@@ -1,4 +1,5 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import HTTPException, status
 
@@ -8,6 +9,11 @@ from app.schemas.warehouse import (
     AvailableDriversResponse,
     AvailableDriversSummary,
     DriverAvailabilityUpdateResponse,
+    WarehouseReturnDayCloseResponse,
+    WarehouseReturnDriverItem,
+    WarehouseReturnRecordResponse,
+    WarehouseReturnsYesterdayDriversResponse,
+    WarehouseReturnsYesterdaySummaryResponse,
     WarehouseZipAssignedPacketsUpdateResponse,
     WarehouseZipCodeCreateResponse,
     WarehouseZipCodeDeleteResponse,
@@ -676,3 +682,369 @@ def delete_zip_code(authorization: str, zip_id: str) -> WarehouseZipCodeDeleteRe
     supabase_admin.table("warehouse_daily_zip_codes").delete().eq("id", zip_id).execute()
 
     return WarehouseZipCodeDeleteResponse(message="ZIP code removed successfully")
+
+
+_RETURN_PLAN_ITEM_COLUMNS = (
+    "id, plan_id, driver_auth_user_id, driver_name, driver_external_id, zip_code, packets"
+)
+
+
+def _get_yesterday_sent_plan(warehouse_auth_user_id: str) -> Optional[dict]:
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    plan_result = (
+        supabase_admin.table("warehouse_assignment_plans")
+        .select("id, plan_date, assigned_packets")
+        .eq("warehouse_auth_user_id", warehouse_auth_user_id)
+        .eq("plan_date", yesterday)
+        .eq("status", "sent")
+        .execute()
+    )
+    return plan_result.data[0] if plan_result.data else None
+
+
+def _load_yesterday_plan_items(plan_id: str) -> list[dict]:
+    result = (
+        supabase_admin.table("warehouse_assignment_plan_items")
+        .select(_RETURN_PLAN_ITEM_COLUMNS)
+        .eq("plan_id", plan_id)
+        .execute()
+    )
+    return result.data or []
+
+
+def _get_return_records_by_plan(plan_id: str) -> dict[str, dict]:
+    result = (
+        supabase_admin.table("warehouse_return_records")
+        .select(
+            "id, plan_id, plan_item_id, driver_auth_user_id, zip_code, assigned_packets, "
+            "returned_packets, signature_status, signature_data, signed_at, updated_at"
+        )
+        .eq("plan_id", plan_id)
+        .execute()
+    )
+    return {row["plan_item_id"]: row for row in result.data or []}
+
+
+def _to_return_driver_item(
+    plan_id: str, item: dict, record: Optional[dict]
+) -> WarehouseReturnDriverItem:
+    if record is not None:
+        returned_packets = record.get("returned_packets") or 0
+        signature_status = record.get("signature_status") or "not_started"
+        signed_at = record.get("signed_at")
+        has_signature = signature_status == "confirmed"
+    else:
+        returned_packets = 0
+        signature_status = "not_started"
+        signed_at = None
+        has_signature = False
+
+    return WarehouseReturnDriverItem(
+        plan_id=plan_id,
+        plan_item_id=item["id"],
+        driver_auth_user_id=item["driver_auth_user_id"],
+        driver_name=item["driver_name"],
+        driver_external_id=item.get("driver_external_id"),
+        zip_code=item["zip_code"],
+        assigned_packets=item["packets"],
+        returned_packets=returned_packets,
+        signature_status=signature_status,
+        signed_at=signed_at,
+        has_signature=has_signature,
+    )
+
+
+def get_returns_yesterday_drivers(authorization: str) -> WarehouseReturnsYesterdayDriversResponse:
+    warehouse_auth_user_id = _require_warehouse(authorization)
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    plan = _get_yesterday_sent_plan(warehouse_auth_user_id)
+    if plan is None:
+        return WarehouseReturnsYesterdayDriversResponse(
+            assignment_date=yesterday, total_items=0, rows=[]
+        )
+
+    items = _load_yesterday_plan_items(plan["id"])
+    records_by_item = _get_return_records_by_plan(plan["id"])
+
+    rows = [
+        _to_return_driver_item(plan["id"], item, records_by_item.get(item["id"]))
+        for item in items
+    ]
+
+    return WarehouseReturnsYesterdayDriversResponse(
+        assignment_date=yesterday, total_items=len(rows), rows=rows
+    )
+
+
+def save_return_record(
+    authorization: str,
+    plan_item_id: str,
+    returned_packets: int,
+    signature_data: object,
+) -> WarehouseReturnRecordResponse:
+    warehouse_auth_user_id = _require_warehouse(authorization)
+
+    if not isinstance(returned_packets, int) or isinstance(returned_packets, bool) or returned_packets <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Returned packets must be a positive integer greater than zero.",
+        )
+    if not signature_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Signature data is required.",
+        )
+
+    plan = _get_yesterday_sent_plan(warehouse_auth_user_id)
+    if plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No sent assignment plan found for yesterday.",
+        )
+
+    item_result = (
+        supabase_admin.table("warehouse_assignment_plan_items")
+        .select(_RETURN_PLAN_ITEM_COLUMNS)
+        .eq("id", plan_item_id)
+        .execute()
+    )
+    if not item_result.data or item_result.data[0]["plan_id"] != plan["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment item not found.")
+    item = item_result.data[0]
+
+    if returned_packets > item["packets"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Returned packets cannot exceed assigned packets.",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    today = date.today().isoformat()
+    payload = {
+        "warehouse_auth_user_id": warehouse_auth_user_id,
+        "plan_id": plan["id"],
+        "plan_item_id": plan_item_id,
+        "return_date": today,
+        "assignment_date": plan["plan_date"],
+        "driver_auth_user_id": item["driver_auth_user_id"],
+        "driver_name": item["driver_name"],
+        "driver_external_id": item.get("driver_external_id"),
+        "zip_code": item["zip_code"],
+        "assigned_packets": item["packets"],
+        "returned_packets": returned_packets,
+        "signature_status": "confirmed",
+        "signature_data": signature_data,
+        "signed_at": now,
+        "updated_at": now,
+    }
+
+    existing_result = (
+        supabase_admin.table("warehouse_return_records")
+        .select("id")
+        .eq("plan_item_id", plan_item_id)
+        .execute()
+    )
+    if existing_result.data:
+        update_result = (
+            supabase_admin.table("warehouse_return_records")
+            .update(payload)
+            .eq("plan_item_id", plan_item_id)
+            .execute()
+        )
+        saved_row = update_result.data[0]
+    else:
+        payload["created_at"] = now
+        insert_result = supabase_admin.table("warehouse_return_records").insert(payload).execute()
+        saved_row = insert_result.data[0]
+
+    return WarehouseReturnRecordResponse(
+        **_to_return_driver_item(plan["id"], item, saved_row).model_dump()
+    )
+
+
+def get_returns_yesterday_summary(authorization: str) -> WarehouseReturnsYesterdaySummaryResponse:
+    warehouse_auth_user_id = _require_warehouse(authorization)
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    plan = _get_yesterday_sent_plan(warehouse_auth_user_id)
+    if plan is None:
+        return WarehouseReturnsYesterdaySummaryResponse(
+            assignment_date=yesterday,
+            status="no_assignment",
+            assigned_yesterday=0,
+            drivers_involved=0,
+            returned_packets=0,
+            confirmed_signatures=0,
+            pending_signatures=0,
+            is_closed=False,
+            closure_id=None,
+            closed_at=None,
+        )
+
+    closure_result = (
+        supabase_admin.table("warehouse_return_day_closures")
+        .select("id, closed_at")
+        .eq("plan_id", plan["id"])
+        .execute()
+    )
+    closure = closure_result.data[0] if closure_result.data else None
+
+    items = _load_yesterday_plan_items(plan["id"])
+
+    assigned_packets = plan.get("assigned_packets")
+    if assigned_packets is None:
+        assigned_packets = sum(item.get("packets") or 0 for item in items)
+
+    drivers_involved = len({item["driver_auth_user_id"] for item in items})
+
+    records_by_item = _get_return_records_by_plan(plan["id"])
+    returned_packets = sum(record.get("returned_packets") or 0 for record in records_by_item.values())
+    confirmed_signatures = sum(
+        1 for record in records_by_item.values() if record.get("signature_status") == "confirmed"
+    )
+    pending_signatures = sum(
+        1 for record in records_by_item.values() if record.get("signature_status") != "confirmed"
+    )
+
+    return WarehouseReturnsYesterdaySummaryResponse(
+        assignment_date=yesterday,
+        status="pending_validation",
+        assigned_yesterday=assigned_packets,
+        drivers_involved=drivers_involved,
+        returned_packets=returned_packets,
+        confirmed_signatures=confirmed_signatures,
+        pending_signatures=pending_signatures,
+        is_closed=closure is not None,
+        closure_id=closure["id"] if closure else None,
+        closed_at=closure["closed_at"] if closure else None,
+    )
+
+
+def close_return_day(authorization: str) -> WarehouseReturnDayCloseResponse:
+    """Closes yesterday's return day: validates every driver return is
+    confirmed and consistent, then writes an immutable closure snapshot for
+    Admin. Never mutates plan items, return records, or ZIP inventory."""
+    warehouse_auth_user_id = _require_warehouse(authorization)
+    today = date.today().isoformat()
+
+    plan = _get_yesterday_sent_plan(warehouse_auth_user_id)
+    if plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No sent assignment plan found for yesterday.",
+        )
+    plan_id = plan["id"]
+
+    existing_closure = (
+        supabase_admin.table("warehouse_return_day_closures")
+        .select("id")
+        .eq("plan_id", plan_id)
+        .execute()
+    )
+    if existing_closure.data:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Return day has already been closed.",
+        )
+
+    items = _load_yesterday_plan_items(plan_id)
+    records_by_item = _get_return_records_by_plan(plan_id)
+    items_by_id = {item["id"]: item for item in items}
+
+    for plan_item_id, record in records_by_item.items():
+        item = items_by_id.get(plan_item_id)
+        driver_name = item["driver_name"] if item else "unknown"
+
+        returned_packets = record.get("returned_packets")
+        if (
+            not isinstance(returned_packets, int)
+            or isinstance(returned_packets, bool)
+            or returned_packets <= 0
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid returned packets for driver {driver_name}.",
+            )
+
+        assigned_packets = record.get("assigned_packets") or 0
+        if returned_packets > assigned_packets:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Returned packets exceed assigned packets for driver {driver_name}.",
+            )
+
+        if record.get("signature_status") != "confirmed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Signature not confirmed for driver {driver_name}.",
+            )
+
+    records = list(records_by_item.values())
+    confirmed_signatures = sum(1 for record in records if record.get("signature_status") == "confirmed")
+    pending_signatures = sum(1 for record in records if record.get("signature_status") != "confirmed")
+
+    total_assigned_packets = sum(item["packets"] for item in items)
+    total_returned_packets = sum(record.get("returned_packets") or 0 for record in records)
+    drivers_count = len({item["driver_auth_user_id"] for item in items})
+
+    now = datetime.now(timezone.utc).isoformat()
+    summary_data = {
+        "plan_id": plan_id,
+        "assignment_date": plan["plan_date"],
+        "return_date": today,
+        "items": [
+            {
+                "plan_item_id": plan_item_id,
+                "driver_auth_user_id": record.get("driver_auth_user_id"),
+                "driver_name": items_by_id[plan_item_id]["driver_name"]
+                if plan_item_id in items_by_id
+                else None,
+                "driver_external_id": items_by_id[plan_item_id].get("driver_external_id")
+                if plan_item_id in items_by_id
+                else None,
+                "zip_code": record.get("zip_code"),
+                "assigned_packets": record.get("assigned_packets"),
+                "returned_packets": record.get("returned_packets"),
+                "signature_status": record.get("signature_status"),
+            }
+            for plan_item_id, record in records_by_item.items()
+        ],
+    }
+
+    insert_result = (
+        supabase_admin.table("warehouse_return_day_closures")
+        .insert(
+            {
+                "warehouse_auth_user_id": warehouse_auth_user_id,
+                "plan_id": plan_id,
+                "assignment_date": plan["plan_date"],
+                "return_date": today,
+                "status": "closed",
+                "total_assigned_packets": total_assigned_packets,
+                "total_returned_packets": total_returned_packets,
+                "drivers_count": drivers_count,
+                "confirmed_signatures": confirmed_signatures,
+                "pending_signatures": pending_signatures,
+                "summary_data": summary_data,
+                "closed_at": now,
+                "updated_at": now,
+            }
+        )
+        .execute()
+    )
+    closure_row = insert_result.data[0]
+
+    return WarehouseReturnDayCloseResponse(
+        status="closed",
+        closure_id=closure_row["id"],
+        assignment_date=plan["plan_date"],
+        return_date=today,
+        total_assigned_packets=total_assigned_packets,
+        total_returned_packets=total_returned_packets,
+        drivers_count=drivers_count,
+        confirmed_signatures=confirmed_signatures,
+        pending_signatures=pending_signatures,
+        message="Return day closed and sent to Admin.",
+    )

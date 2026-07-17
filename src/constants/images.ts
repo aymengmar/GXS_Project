@@ -8,6 +8,7 @@ const companyVehicle = require("@/assets/images/driver/company-vehicle.png");
 const ownVehicle = require("@/assets/images/driver/car.png");
 const warehouseMainIcon = require("@/assets/images/warehouse/warehouse-main-icon.png");
 const warehousePlanAssignHero = require("@/assets/images/warehouse/image12.png");
+const warehouseReturnsBoxes = require("@/assets/images/warehouse/returns-boxes.png");
 
 export const images = {
   logoGlow,
@@ -20,4 +21,5 @@ export const images = {
   ownVehicle,
   warehouseMainIcon,
   warehousePlanAssignHero,
+  warehouseReturnsBoxes,
 };

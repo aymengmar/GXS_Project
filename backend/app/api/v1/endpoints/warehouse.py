@@ -11,6 +11,11 @@ from app.schemas.warehouse import (
     AvailableDriversResponse,
     DriverAvailabilityUpdateRequest,
     DriverAvailabilityUpdateResponse,
+    WarehouseReturnDayCloseResponse,
+    WarehouseReturnRecordResponse,
+    WarehouseReturnRecordSaveRequest,
+    WarehouseReturnsYesterdayDriversResponse,
+    WarehouseReturnsYesterdaySummaryResponse,
     WarehouseZipAssignedPacketsUpdateRequest,
     WarehouseZipAssignedPacketsUpdateResponse,
     WarehouseZipCodeCreateRequest,
@@ -31,9 +36,13 @@ from app.services.assignment_service import (
 )
 from app.services.warehouse_service import (
     add_zip_code,
+    close_return_day,
     delete_zip_code,
     get_available_drivers,
+    get_returns_yesterday_drivers,
+    get_returns_yesterday_summary,
     get_today_zip_codes,
+    save_return_record,
     update_driver_availability,
     update_zip_assigned_packets,
     update_zip_packet_count,
@@ -63,6 +72,49 @@ def update_driver_availability_endpoint(
 @router.get("/zip-count/today", response_model=WarehouseZipCodeListResponse)
 def zip_count_today(authorization: str = Header(...)) -> WarehouseZipCodeListResponse:
     return get_today_zip_codes(authorization)
+
+
+@router.get(
+    "/returns/yesterday-summary",
+    response_model=WarehouseReturnsYesterdaySummaryResponse,
+)
+def returns_yesterday_summary(
+    authorization: str = Header(...),
+) -> WarehouseReturnsYesterdaySummaryResponse:
+    return get_returns_yesterday_summary(authorization)
+
+
+@router.get(
+    "/returns/yesterday-drivers",
+    response_model=WarehouseReturnsYesterdayDriversResponse,
+)
+def returns_yesterday_drivers(
+    authorization: str = Header(...),
+) -> WarehouseReturnsYesterdayDriversResponse:
+    return get_returns_yesterday_drivers(authorization)
+
+
+@router.post(
+    "/returns/records",
+    response_model=WarehouseReturnRecordResponse,
+)
+def returns_record_save(
+    body: WarehouseReturnRecordSaveRequest,
+    authorization: str = Header(...),
+) -> WarehouseReturnRecordResponse:
+    return save_return_record(
+        authorization, body.plan_item_id, body.returned_packets, body.signature_data
+    )
+
+
+@router.post(
+    "/returns/close-day",
+    response_model=WarehouseReturnDayCloseResponse,
+)
+def returns_close_day(
+    authorization: str = Header(...),
+) -> WarehouseReturnDayCloseResponse:
+    return close_return_day(authorization)
 
 
 @router.post(

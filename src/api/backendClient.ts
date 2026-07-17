@@ -1432,6 +1432,144 @@ export async function sendWarehouseAssignmentPlan(
   return data as WarehouseAssignmentPlanSendResponse;
 }
 
+// ── Warehouse Returns ─────────────────────────────────────────────────────────
+
+export type WarehouseReturnsYesterdaySummaryStatus = "pending_validation" | "no_assignment";
+
+export type WarehouseReturnsYesterdaySummaryResponse = {
+  assignment_date: string;
+  status: WarehouseReturnsYesterdaySummaryStatus;
+  assigned_yesterday: number;
+  drivers_involved: number;
+  returned_packets: number;
+  confirmed_signatures: number;
+  pending_signatures: number;
+  is_closed: boolean;
+  closure_id: string | null;
+  closed_at: string | null;
+};
+
+export async function fetchWarehouseYesterdayReturnsSummary(
+  accessToken: string,
+): Promise<WarehouseReturnsYesterdaySummaryResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/returns/yesterday-summary`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to load yesterday's returns summary."),
+    );
+  }
+  return data as WarehouseReturnsYesterdaySummaryResponse;
+}
+
+// ── Warehouse Returns — Returns by Driver ─────────────────────────────────────
+
+export type WarehouseReturnSignatureStatus = "not_started" | "confirmed";
+
+export type WarehouseReturnDriverItem = {
+  plan_id: string;
+  plan_item_id: string;
+  driver_auth_user_id: string;
+  driver_name: string;
+  driver_external_id: string | null;
+  zip_code: string;
+  assigned_packets: number;
+  returned_packets: number;
+  signature_status: WarehouseReturnSignatureStatus;
+  signed_at: string | null;
+  has_signature: boolean;
+};
+
+export type WarehouseReturnsYesterdayDriversResponse = {
+  assignment_date: string;
+  total_items: number;
+  rows: WarehouseReturnDriverItem[];
+};
+
+export async function fetchWarehouseYesterdayReturnDrivers(
+  accessToken: string,
+): Promise<WarehouseReturnsYesterdayDriversResponse> {
+  const res = await fetch(
+    `${BACKEND_BASE_URL}/api/v1/warehouse/returns/yesterday-drivers`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to load returns by driver."),
+    );
+  }
+  return data as WarehouseReturnsYesterdayDriversResponse;
+}
+
+export type SignatureStrokesData = {
+  type: "signature_strokes";
+  strokes: string[];
+};
+
+export async function saveWarehouseReturnRecord(
+  accessToken: string,
+  planItemId: string,
+  returnedPackets: number,
+  signatureData: SignatureStrokesData,
+): Promise<WarehouseReturnDriverItem> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/warehouse/returns/records`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      plan_item_id: planItemId,
+      returned_packets: returnedPackets,
+      signature_data: signatureData,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to save return. Please try again."),
+    );
+  }
+  return data as WarehouseReturnDriverItem;
+}
+
+export type WarehouseReturnDayCloseResponse = {
+  status: "closed";
+  closure_id: string;
+  assignment_date: string;
+  return_date: string;
+  total_assigned_packets: number;
+  total_returned_packets: number;
+  drivers_count: number;
+  confirmed_signatures: number;
+  pending_signatures: number;
+  message: string;
+};
+
+export async function closeWarehouseReturnDay(
+  accessToken: string,
+): Promise<WarehouseReturnDayCloseResponse> {
+  const res = await fetch(`${BACKEND_BASE_URL}/api/v1/warehouse/returns/close-day`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      extractErrorMessage(data, "Unable to close return day. Please try again."),
+    );
+  }
+  return data as WarehouseReturnDayCloseResponse;
+}
+
 export async function validateWarehouseZipCode(
   accessToken: string,
   zipId: string,
